@@ -11,7 +11,6 @@
 #    WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
 #    License for the specific language governing permissions and limitations
 #    under the License.
-#
 
 import json
 import logging
@@ -104,136 +103,185 @@ class PopulateIDs(db_base_plugin_v2.NeutronDbPluginV2,
         query = self.context.session.query(nuage_models.NetPartitionRouter)
         routers = query.all()
         for router in routers:
-            data = {
-                'externalID': router['router_id']
-            }
-            response = self.nuageclient.rest_call(
-                'PUT',
-                "/domains/" + router['nuage_router_id'],
-                data)
-            self.validate(response, 'Router', router['router_id'])
+            try:
+                data = {
+                    'externalID': router['router_id']
+                }
+                response = self.nuageclient.rest_call(
+                    'PUT',
+                    "/domains/" + router['nuage_router_id'] +
+                    "?responseChoice=1",
+                    data)
+                self.validate(response, 'Router', router['router_id'])
+            except Exception as e:
+                LOG.error("Error %(err)s while setting externalID for router "
+                          "%(rtr)s" % {'err': str(e),
+                                       'rtr': router['router_id']})
 
     def handle_subnets(self):
         query = self.context.session.query(nuage_models.SubnetL2Domain)
         subnets = query.all()
         for subnet in subnets:
-            data = {
-                'externalID': subnet['subnet_id']
-            }
+            try:
+                data = {
+                    'externalID': subnet['subnet_id']
+                }
 
-            if subnet['nuage_l2dom_tmplt_id']:
-                url_str = "/l2domains/" + subnet['nuage_subnet_id']
-            else:
-                url_str = "/subnets/" + subnet['nuage_subnet_id']
+                if subnet['nuage_l2dom_tmplt_id']:
+                    url_str = "/l2domains/" + subnet['nuage_subnet_id'] + \
+                              "?responseChoice=1"
+                else:
+                    url_str = "/subnets/" + subnet['nuage_subnet_id'] \
+                              + "?responseChoice=1"
 
-            response = self.nuageclient.rest_call('PUT', url_str, data)
-            self.validate(response, 'Subnet', subnet['subnet_id'])
+                response = self.nuageclient.rest_call('PUT', url_str, data)
+                self.validate(response, 'Subnet', subnet['subnet_id'])
+            except Exception as e:
+                LOG.error("Error %(err)s while setting externalID for subnet "
+                          "%(sub)s" % {'err': str(e),
+                                       'sub': subnet['subnet_id']})
 
     def handle_ext_networks(self):
         query = self.context.session.query(nuage_models.FloatingIPPoolMapping)
         networks = query.all()
         for network in networks:
-            response = self.nuageclient.rest_call(
-                'GET',
-                "/sharednetworkresources/" + network['fip_pool_id'], '')
+            try:
+                response = self.nuageclient.rest_call(
+                    'GET',
+                    "/sharednetworkresources/" + network['fip_pool_id'], '')
 
-            sharednet = response[3][0]
-            cidr = self.convert_to_cidr(sharednet['address'],
-                                        sharednet['netmask'])
-            filter = {
-                'network_id': [network['net_id']],
-                'cidr': [cidr]
-            }
-            subnet = self.get_subnets(self.context, filters=filter)
+                sharednet = response[3][0]
+                cidr = self.convert_to_cidr(sharednet['address'],
+                                            sharednet['netmask'])
+                filter = {
+                    'network_id': [network['net_id']],
+                    'cidr': [cidr]
+                }
+                subnet = self.get_subnets(self.context, filters=filter)
 
-            data = {
-                'externalID': subnet[0]['id']
-            }
-            response = self.nuageclient.rest_call(
-                'PUT',
-                "/sharednetworkresources/" + network['fip_pool_id'],
-                data)
-            self.validate(response, 'ExternalNetwork', subnet[0]['id'])
+                data = {
+                    'externalID': subnet[0]['id']
+                }
+                response = self.nuageclient.rest_call(
+                    'PUT',
+                    "/sharednetworkresources/" + network['fip_pool_id'] +
+                    "?responseChoice=1",
+                    data)
+                self.validate(response, 'ExternalNetwork', subnet[0]['id'])
+            except Exception as e:
+                LOG.error("Error %(err)s while setting externalID for ext-net "
+                          "%(net)s" % {'err': str(e),
+                                       'net': subnet[0]['id']})
 
     def handle_fips(self):
         query = self.context.session.query(nuage_models.FloatingIPMapping)
         fips = query.all()
         for fip in fips:
-            data = {
-                'externalID': fip['fip_id']
-            }
-            response = self.nuageclient.rest_call(
-                'PUT',
-                "/floatingips/" + fip['nuage_fip_id'],
-                data)
-            self.validate(response, 'FloatingIP', fip['fip_id'])
+            try:
+                data = {
+                    'externalID': fip['fip_id']
+                }
+                response = self.nuageclient.rest_call(
+                    'PUT',
+                    "/floatingips/" + fip['nuage_fip_id'] + "?responseChoice=1",
+                    data)
+                self.validate(response, 'FloatingIP', fip['fip_id'])
+            except Exception as e:
+                LOG.error("Error %(err)s while setting externalID for fip "
+                          "%(fip)s" % {'err': str(e),
+                                       'fip': fip['fip_id']})
 
     def handle_routes(self):
         query = self.context.session.query(nuage_models.RouterRoutesMapping)
         routes = query.all()
         for route in routes:
-            ent_rtr_mapping = nuagedb.get_ent_rtr_mapping_by_rtrid(route[
-                'router_id'])
-            data = {
-                'externalID': ent_rtr_mapping['nuage_router_id']
-            }
+            try:
+                ent_rtr_mapping = nuagedb.get_ent_rtr_mapping_by_rtrid(route[
+                    'router_id'])
+                data = {
+                    'externalID': ent_rtr_mapping['nuage_router_id']
+                }
 
-            response = self.nuageclient.rest_call(
-                'PUT',
-                "/staticroutes/" + route['nuage_route_id'],
-                data)
-            self.validate(response, 'Route', route['destination'] + ':' +
-                          route['nexthop'])
+                response = self.nuageclient.rest_call(
+                    'PUT',
+                    "/staticroutes/" + route['nuage_route_id'] +
+                    "?responseChoice=1",
+                    data)
+                self.validate(response, 'Route', route['destination'] + ':' +
+                              route['nexthop'])
+            except Exception as e:
+                LOG.error("Error %(err)s while setting externalID for route "
+                          "with destination %(dest)s and nexthop %(hop)s"
+                          % {'err': str(e),
+                             'dest': route['destination'],
+                             'hop': route['nexthop']})
 
     def handle_secgroups(self):
         query = self.context.session.query(
             nuage_models.SecGroupVPortTagMapping)
         secgroups = query.all()
         for secgrp in secgroups:
-            data = {
-                'externalID': secgrp['secgroup_id']
-            }
-            response = self.nuageclient.rest_call(
-                'PUT',
-                "/policygroups/" + secgrp['nuage_vporttag_id'],
-                data)
-            self.validate(response, 'SecurityGroup', secgrp['secgroup_id'])
+            try:
+                data = {
+                    'externalID': secgrp['secgroup_id']
+                }
+                response = self.nuageclient.rest_call(
+                    'PUT',
+                    "/policygroups/" + secgrp['nuage_vporttag_id'] +
+                    "?responseChoice=1",
+                    data)
+                self.validate(response,
+                              'SecurityGroup', secgrp['secgroup_id'])
+            except Exception as e:
+                LOG.error("Error %(err)s while setting externalID for secgrp"
+                          "%(sec)s" % {'err': str(e),
+                                       'sec': secgrp['secgroup_id']})
 
     def handle_secgrouprules(self):
         query = self.context.session.query(
             nuage_models.SecGroupRuleACLMapping)
         secgrouprules = query.all()
         for secrule in secgrouprules:
+            try:
+                sgrule = self.get_security_group_rule(self.context,
+                                                      secrule['sgrule_id'])
+                data = {
+                    'externalID': secrule['sgrule_id']
+                }
 
-            sgrule = self.get_security_group_rule(self.context,
-                                                  secrule['sgrule_id'])
-            data = {
-                'externalID': secrule['sgrule_id']
-            }
+                if sgrule['direction'] == 'ingress':
+                    url_str = "/ingressaclentrytemplates/"+secrule['nuage_acl_id']\
+                              + "?responseChoice=1"
+                else:
+                    url_str = "/egressaclentrytemplates/"+secrule['nuage_acl_id']\
+                              + "?responseChoice=1"
 
-            if sgrule['direction'] == 'ingress':
-                url_str = "/ingressacltemplates/"+secrule['nuage_acl_id']\
-                          +"/ingressaclentrytemplates"
-            else:
-                url_str = "/egressacltemplates/"+secrule['nuage_acl_id']\
-                          +"/egressaclentrytemplates"
-
-            response = self.nuageclient.rest_call('PUT', url_str, data)
-            self.validate(response, 'SecurityGroupRule', secrule['sgrule_id'])
+                response = self.nuageclient.rest_call('PUT', url_str, data)
+                self.validate(response, 'SecurityGroupRule', secrule['sgrule_id'])
+            except Exception as e:
+                LOG.error("Error %(err)s while setting externalID for secrule"
+                          "%(sec)s" % {'err': str(e),
+                                       'sec': secrule['sgrule_id']})
 
     def handle_vm_ports(self):
         query = self.context.session.query(nuage_models.PortVPortMapping)
         vports = query.all()
         for vport in vports:
-            data = {
-                'externalID': vport['port_id']
-            }
-            response = self.nuageclient.rest_call(
-                'PUT',
-                "/vminterfaces/" + vport['nuage_vif_id'],
-                data
-            )
-            self.validate(response, 'VMInterface', vport['nuage_vif_id'])
+            try:
+                data = {
+                    'externalID': vport['port_id']
+                }
+                response = self.nuageclient.rest_call(
+                    'PUT',
+                    "/vminterfaces/" + vport['nuage_vif_id'] +
+                    "?responseChoice=1",
+                    data
+                )
+                self.validate(response, 'VMInterface', vport['nuage_vif_id'])
+            except Exception as e:
+                LOG.error("Error %(err)s while setting externalID for "
+                          "vport %(vm)s" % {'err': str(e),
+                                            'vm': vport['port_id']})
 
     def get_net_size(self, netmask):
         binary_str = ''
@@ -266,6 +314,8 @@ def main():
     if not set_extID and not set_rtrd:
         print "Usage: python icehouse_juno_upgrade.py <setexternalid> " \
               "<setrtrd>"
+        print "<setrtrd> should be used on icehouse"
+        print "<setexternalid> should be used on juno"
         return
 
     args = ['--config-file', NEUTRON_CONFIG_FILE, '--config-file',
@@ -312,9 +362,11 @@ def main():
     except Exception as e:
         LOG.error("Error in connecting to VSD:%s", str(e))
         return
+
     if set_extID:
         try:
             PopulateIDs(nuageclient).populate_externalid()
+            LOG.debug("Setting externalids is now complete")
         except Exception as e:
             LOG.error("Error in setting external ids:%s", str(e))
             return
@@ -322,6 +374,7 @@ def main():
     if set_rtrd:
         try:
             PopulateIDs(nuageclient).populate_rt_rd()
+            LOG.debug("Setting rt/rd is now complete")
         except Exception as e:
             LOG.error("Error in seting rt/rd:%s", str(e))
             return
