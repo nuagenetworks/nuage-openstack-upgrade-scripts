@@ -12,6 +12,7 @@
 #    License for the specific language governing permissions and limitations
 #    under the License.
 
+import argparse
 import json
 import logging
 import logging.handlers
@@ -302,20 +303,21 @@ class PopulateIDs(db_base_plugin_v2.NeutronDbPluginV2,
 
 
 def main():
-
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--setexternalid", action='store_true',
+                        help='Option to set externalID, should be used on icehouse')
+    parser.add_argument("--setrtrd", action='store_true',
+                        help='option to set rt/rd, should be used on juno')
+    args = parser.parse_args()
     set_extID = False
     set_rtrd = False
-    for arg in sys.argv:
-        if arg == 'setexternalid':
-            set_extID = True
-        elif arg == 'setrtrd':
-            set_rtrd = True
-
-    if not set_extID and not set_rtrd:
-        print "Usage: python icehouse_juno_upgrade.py <setexternalid> " \
-              "<setrtrd>"
-        print "<setrtrd> should be used on icehouse"
-        print "<setexternalid> should be used on juno"
+   
+    if args.setexternalid:
+        set_extID = True
+    elif args.setrtrd:
+        set_rtrd = True
+    else:
+        parser.print_help()
         return
 
     args = ['--config-file', NEUTRON_CONFIG_FILE, '--config-file',
@@ -325,7 +327,6 @@ def main():
         config.parse(args)
     else:
         config.init(args)
-        
     nuage_config.nuage_register_cfg_opts()
 
     server = cfg.CONF.RESTPROXY.server
