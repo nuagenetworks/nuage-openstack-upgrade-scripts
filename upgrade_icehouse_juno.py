@@ -32,8 +32,6 @@ from neutron.plugins.nuage import nuage_models
 from neutron.plugins.nuage import nuagedb
 
 LOG = logging.getLogger('Upgrade_Logger')
-NEUTRON_CONFIG_FILE = '/etc/neutron/neutron.conf'
-NUAGE_CONFIG_FILE = '/etc/neutron/plugins/nuage/nuage_plugin.ini'
 REST_SUCCESS_CODES = range(200, 207)
 
 
@@ -308,6 +306,8 @@ def main():
                         help='Option to set externalID, should be used on icehouse')
     parser.add_argument("--setrtrd", action='store_true',
                         help='option to set rt/rd, should be used on juno')
+    parser.add_argument("--config-file", nargs='+',
+                        help='List of config files separated by space')
     args = parser.parse_args()
     set_extID = False
     set_rtrd = False
@@ -320,13 +320,20 @@ def main():
         parser.print_help()
         return
 
-    args = ['--config-file', NEUTRON_CONFIG_FILE, '--config-file',
-            NUAGE_CONFIG_FILE]
+    conffiles = args.config_file
+    if conffiles is None:
+        parser.print_help()
+        return
+
+    conf_list = []
+    for conffile in conffiles:
+        conf_list.append('--config-file')
+        conf_list.append(conffile)
 
     if set_extID:
-        config.parse(args)
+        config.parse(conf_list)
     else:
-        config.init(args)
+        config.init(conf_list)
     nuage_config.nuage_register_cfg_opts()
 
     server = cfg.CONF.RESTPROXY.server
