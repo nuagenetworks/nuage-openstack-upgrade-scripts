@@ -248,7 +248,7 @@ class PopulateIDs(db_base_plugin_v2.NeutronDbPluginV2,
                     'externalID': secrule['sgrule_id']
                 }
 
-                if sgrule['direction'] == 'ingress':
+                if sgrule['direction'] == 'egress':
                     url_str = "/ingressaclentrytemplates/"+secrule['nuage_acl_id']\
                               + "?responseChoice=1"
                 else:
