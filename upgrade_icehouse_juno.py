@@ -121,24 +121,28 @@ class PopulateIDs(db_base_plugin_v2.NeutronDbPluginV2,
         query = self.context.session.query(nuage_models.SubnetL2Domain)
         subnets = query.all()
         for subnet in subnets:
-            try:
-                data = {
-                    'externalID': subnet['subnet_id']
-                }
+            if not subnet['nuage_managed_subnet']:
+                try:
+                    data = {
+                        'externalID': subnet['subnet_id']
+                    }
 
-                if subnet['nuage_l2dom_tmplt_id']:
-                    url_str = "/l2domains/" + subnet['nuage_subnet_id'] + \
-                              "?responseChoice=1"
-                else:
-                    url_str = "/subnets/" + subnet['nuage_subnet_id'] \
-                              + "?responseChoice=1"
+                    if subnet['nuage_l2dom_tmplt_id']:
+                        url_str = ("/l2domains/" + subnet['nuage_subnet_id'] + 
+                                  "?responseChoice=1")
+                    else:
+                        url_str = ("/subnets/" + subnet['nuage_subnet_id'] 
+                                  + "?responseChoice=1")
 
-                response = self.nuageclient.rest_call('PUT', url_str, data)
-                self.validate(response, 'Subnet', subnet['subnet_id'])
-            except Exception as e:
-                LOG.error("Error %(err)s while setting externalID for subnet "
-                          "%(sub)s" % {'err': str(e),
-                                       'sub': subnet['subnet_id']})
+                    response = self.nuageclient.rest_call('PUT', url_str, data)
+                    self.validate(response, 'Subnet', subnet['subnet_id'])
+                except Exception as e:
+                    LOG.error("Error %(err)s while setting externalID for subnet "
+                              "%(sub)s" % {'err': str(e),
+                                           'sub': subnet['subnet_id']})
+            else:
+                LOG.info("ExternalID will not be set for subnet %s as it is a VSD"
+                         " managed subnet", subnet['subnet_id'])
 
     def handle_ext_networks(self):
         query = self.context.session.query(nuage_models.FloatingIPPoolMapping)
