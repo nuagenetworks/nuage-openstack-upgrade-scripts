@@ -20,7 +20,13 @@ from configobj import ConfigObj
 
 from uuid import getnode
 
-from neutron.openstack.common._i18n import _  # noqa
+
+def dummy(msg):
+    return msg
+
+import __builtin__
+__builtin__.__dict__['_'] = dummy
+
 
 from nuagenetlib import nuageclient
 
