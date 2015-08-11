@@ -17,6 +17,7 @@ import datetime
 import logging
 import logging.handlers
 import os
+import sys
 import yaml
 
 from oslo.config import cfg
@@ -176,7 +177,7 @@ class CmsAuditor(db_base_plugin_v2.NeutronDbPluginV2,
                % (gress_type, template_id, gress_type))
         response = self.get(url, '')
         for acl_entry_template in response[3]:
-            if '@' not in acl_entry_template['externalID']:
+            if '@' not in (acl_entry_template['externalID'] or ''):
                 vsp_type = "%sGRESS_ACLTEMPLATES_ENTRIES" % gress_type.upper()
                 self.add_descrepancy(vsp_type, acl_entry_template['ID'])
 
@@ -342,6 +343,9 @@ def main():
     conf_list = []
     for conffile in cfg_files:
         conf_list.append('--config-file')
+        if not os.path.isfile(conffile):
+            LOG.error('File "%s" cannot be found.' % conffile)
+            sys.exit(1)
         conf_list.append(conffile)
 
     config.init(conf_list)

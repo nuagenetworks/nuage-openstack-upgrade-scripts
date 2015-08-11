@@ -17,6 +17,7 @@ import re
 import logging
 import logging.handlers
 import os
+import sys
 import vsdclient_config
 import yaml
 
@@ -115,7 +116,12 @@ def main():
     if cfg_file is None:
         parser.print_help()
         return
-
+    if not os.path.isfile(cfg_file):
+        LOG.error('File "%s" cannot be found.' % cfg_file)
+        sys.exit(1)
+    if not os.path.isfile(audit_file):
+        LOG.error('File "%s" cannot be found.' % audit_file)
+        sys.exit(1)
     conf_list = ['--config-file', cfg_file]
 
     cfg.CONF(conf_list)

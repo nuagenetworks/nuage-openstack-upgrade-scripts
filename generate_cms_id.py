@@ -46,10 +46,16 @@ class NuagePluginConfig(object):
         self.config.filename = cfg_file_location
 
     def get(self, section, key):
-        return self.config[section].get(key)
+        try:
+            return self.config[section].get(key)
+        except KeyError:
+            return self.config[section.upper()].get(key)
 
     def set(self, section, key, value):
-        self.config[section][key] = value
+        try:
+            self.config[section][key] = value
+        except KeyError:
+            return self.config[section.upper()].get(key)
 
     def write_file(self):
         self.config.write()
@@ -84,6 +90,9 @@ if __name__ == '__main__':
     parser = init_arg_parser()
     args = parser.parse_args()
 
+    if not os.path.isfile(args.config_file):
+        LOG.error('File "%s" cannot be found.' % args.config_file)
+        sys.exit(1)
     plugin_config = NuagePluginConfig(args.config_file)
 
     cms_id = plugin_config.get('restproxy', 'cms_id')
