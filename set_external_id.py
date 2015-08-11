@@ -26,10 +26,26 @@ from neutron import context as ncontext
 from neutron.db import db_base_plugin_v2
 from neutron.db import extraroute_db
 from neutron.db import securitygroups_db
-from neutron.openstack.common import importutils
-from neutron.plugins.nuage.common import config as nuage_config
-from neutron.plugins.nuage import nuage_models
-from neutron.plugins.nuage import nuagedb
+
+try:
+    from neutron.openstack.common import importutils
+except ImportError:
+    from oslo_utils import importutils
+
+try:
+    from neutron.plugins.nuage.common import config as nuage_config
+except ImportError:
+    from nuage_neutron.plugins.nuage.common import config as nuage_config
+
+try:
+    from neutron.plugins.nuage import nuage_models
+except ImportError:
+    from nuage_neutron.plugins.nuage import nuage_models
+
+try:
+    from neutron.plugins.nuage import nuagedb
+except ImportError:
+    from nuage_neutron.plugins.nuage import nuagedb
 
 LOG = logging.getLogger('Upgrade_Logger')
 REST_SUCCESS_CODES = range(200, 207)
@@ -69,34 +85,6 @@ class PopulateIDs(db_base_plugin_v2.NeutronDbPluginV2,
         self.handle_secgroups()
         self.handle_secgrouprules()
         self.handle_vm_ports()
-
-    def populate_rt_rd(self):
-        query = self.context.session.query(nuage_models.NetPartitionRouter)
-        routers = query.all()
-        for router in routers:
-            try:
-                response = self.nuageclient.rest_call(
-                    'GET',
-                    "/domains/" + router['nuage_router_id'], '')
-                if response[0] not in REST_SUCCESS_CODES:
-                    LOG.error("Error: %s" % self.get_error_msg(response[3]))
-                else:
-                    resp_obj = response[3][0]
-                    rd = resp_obj['routeDistinguisher']
-                    rt = resp_obj['routeTarget']
-                    ent_rtr_mapping = nuagedb.get_ent_rtr_mapping_by_rtrid(
-                        self.context.session, router['router_id'])
-                    with self.context.session.begin(subtransactions=True):
-                        ns_dict = {}
-                        ns_dict['nuage_rtr_rt'] = rt
-                        ns_dict['nuage_rtr_rd'] = rd
-                        nuagedb.update_entrouter_mapping(ent_rtr_mapping,
-                                                         ns_dict)
-                        LOG.debug("RT/RD set successfully in neutron for router"
-                                  "%s" % router['router_id'])
-            except Exception:
-                LOG.error("Error in setting RT/RD for router %s" % router[
-                    'router_id'])
 
     def handle_routers(self):
         query = self.context.session.query(nuage_models.NetPartitionRouter)
@@ -199,8 +187,9 @@ class PopulateIDs(db_base_plugin_v2.NeutronDbPluginV2,
         routes = query.all()
         for route in routes:
             try:
-                ent_rtr_mapping = nuagedb.get_ent_rtr_mapping_by_rtrid(route[
-                    'router_id'])
+                ent_rtr_mapping = nuagedb.get_ent_rtr_mapping_by_rtrid(
+                    self.context.session,
+                    route['router_id'])
                 data = {
                     'externalID': ent_rtr_mapping['nuage_router_id']
                 }
@@ -306,46 +295,14 @@ class PopulateIDs(db_base_plugin_v2.NeutronDbPluginV2,
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--setexternalid", action='store_true',
-                        help='Option to set externalID, should be used on icehouse')
-    parser.add_argument("--setrtrd", action='store_true',
-                        help='option to set rt/rd, should be used on juno')
     parser.add_argument("--config-file", nargs='+',
                         help='List of config files separated by space')
     args = parser.parse_args()
-    set_extID = False
-    set_rtrd = False
-   
-    if args.setexternalid:
-        set_extID = True
-    elif args.setrtrd:
-        set_rtrd = True
-    else:
-        parser.print_help()
-        return
 
     conffiles = args.config_file
     if conffiles is None:
         parser.print_help()
         return
-
-    conf_list = []
-    for conffile in conffiles:
-        conf_list.append('--config-file')
-        conf_list.append(conffile)
-
-    if set_extID:
-        config.parse(conf_list)
-    else:
-        config.init(conf_list)
-    nuage_config.nuage_register_cfg_opts()
-
-    server = cfg.CONF.RESTPROXY.server
-    serverauth = cfg.CONF.RESTPROXY.serverauth
-    serverssl = cfg.CONF.RESTPROXY.serverssl
-    base_uri = cfg.CONF.RESTPROXY.base_uri
-    auth_resource = cfg.CONF.RESTPROXY.auth_resource
-    organization = cfg.CONF.RESTPROXY.organization
 
     # Create a logfile
     log_dir = os.path.expanduser('~') + '/nuageupgrade'
@@ -358,38 +315,40 @@ def main():
     LOG.addHandler(hdlr)
     logging.basicConfig(level=logging.DEBUG)
 
+    conf_list = []
+    for conffile in conffiles:
+        if not os.path.isfile(conffile):
+            LOG.error('File "%s" cannot be found.' % conffile)
+            return
+        conf_list.append('--config-file')
+        conf_list.append(conffile)
+
+    config.parse(conf_list)
+    nuage_config.nuage_register_cfg_opts()
+
+    server = cfg.CONF.RESTPROXY.server
+    serverauth = cfg.CONF.RESTPROXY.serverauth
+    serverssl = cfg.CONF.RESTPROXY.serverssl
+    base_uri = cfg.CONF.RESTPROXY.base_uri
+    auth_resource = cfg.CONF.RESTPROXY.auth_resource
+    organization = cfg.CONF.RESTPROXY.organization
+
     nuageclientinst = importutils.import_module('nuagenetlib.nuageclient')
     try:
-        if set_extID:
-            nuageclient = nuageclientinst.NuageClient(server, base_uri,
+        nuageclient = nuageclientinst.NuageClient(server, base_uri,
                                                   serverssl, serverauth,
                                                   auth_resource,20,
                                                   organization)
-        else:
-            nuageclient = nuageclientinst.NuageClient(server, base_uri,
-                                                  serverssl, serverauth,
-                                                  auth_resource,
-                                                  organization)
-
     except Exception as e:
         LOG.error("Error in connecting to VSD:%s", str(e))
         return
 
-    if set_extID:
-        try:
-            PopulateIDs(nuageclient).populate_externalid()
-            LOG.debug("Setting externalids is now complete")
-        except Exception as e:
-            LOG.error("Error in setting external ids:%s", str(e))
-            return
-
-    if set_rtrd:
-        try:
-            PopulateIDs(nuageclient).populate_rt_rd()
-            LOG.debug("Setting rt/rd is now complete")
-        except Exception as e:
-            LOG.error("Error in seting rt/rd:%s", str(e))
-            return
+    try:
+        PopulateIDs(nuageclient).populate_externalid()
+        LOG.debug("Setting externalids is now complete")
+    except Exception as e:
+        LOG.error("Error in setting external ids:%s", str(e))
+        return
 
 if __name__ == '__main__':
     main()
