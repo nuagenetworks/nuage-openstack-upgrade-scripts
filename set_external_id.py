@@ -263,6 +263,8 @@ class PopulateIDs(db_base_plugin_v2.NeutronDbPluginV2,
                 data = {
                     'externalID': vport['port_id']
                 }
+                if not vport.get('nuage_vif_id'):
+                    continue
                 response = self.nuageclient.rest_call(
                     'PUT',
                     "/vminterfaces/" + vport['nuage_vif_id'] +
