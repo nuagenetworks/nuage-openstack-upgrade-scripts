@@ -35,7 +35,7 @@ def get_mac():
     mac = getnode()
     return ':'.join(("%012X" % mac)[i:i + 2] for i in range(0, 12, 2))
 
-DEFAULT_CFG_LOCATION = '/etc/neutron/plugins/nuage/nuage_plugin.ini'
+
 DEFAULT_CMS_NAME = 'OpenStack_' + get_mac()
 LOG = logging.getLogger('generate_cms_id')
 
@@ -55,7 +55,7 @@ class NuagePluginConfig(object):
         try:
             self.config[section][key] = value
         except KeyError:
-            return self.config[section.upper()].get(key)
+            self.config[section.upper()][key] = value
 
     def write_file(self):
         self.config.write()
@@ -75,7 +75,6 @@ def init_logger():
 def init_arg_parser():
     parser = argparse.ArgumentParser()
     parser.add_argument('--config-file', action='store',
-                        default=DEFAULT_CFG_LOCATION,
                         help='The location of the nuage_plugin.ini file')
     parser.add_argument('--name', action='store',
                         default=DEFAULT_CMS_NAME,

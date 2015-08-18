@@ -163,10 +163,10 @@ class CmsAuditor(db_base_plugin_v2.NeutronDbPluginV2,
             else:
                 in_url = '/domains/%s/ingressacltemplates' % domain_id
                 eg_url = '/domains/%s/egressacltemplates' % domain_id
-            self._audit_gress('in', in_url)
-            self._audit_gress('e', eg_url)
+            self._audit_gress('in', in_url, sg['id'])
+            self._audit_gress('e', eg_url, sg['id'])
 
-    def _audit_gress(self, gress_type, url):
+    def _audit_gress(self, gress_type, url, sg_id):
         response = self.get(url, '')
         if not response[3]:
             LOG.error("No response from %s." % url)
@@ -177,7 +177,7 @@ class CmsAuditor(db_base_plugin_v2.NeutronDbPluginV2,
                % (gress_type, template_id, gress_type))
         response = self.get(url, '')
         for acl_entry_template in response[3]:
-            if '@' not in (acl_entry_template['externalID'] or ''):
+            if sg_id == acl_entry_template['externalID']:
                 vsp_type = "%sGRESS_ACLTEMPLATES_ENTRIES" % gress_type.upper()
                 self.add_descrepancy(vsp_type, acl_entry_template['ID'])
 
@@ -340,6 +340,17 @@ def main():
         parser.print_help()
         return
 
+    # Create a logfile
+    log_dir = os.path.expanduser('~') + '/nuageupgrade'
+    if not os.path.exists(log_dir):
+        os.makedirs(log_dir)
+
+    hdlr = logging.FileHandler(log_dir + '/upgrade.log')
+    formatter = logging.Formatter('%(asctime)s %(levelname)s %(message)s')
+    hdlr.setFormatter(formatter)
+    LOG.addHandler(hdlr)
+    logging.basicConfig(level=logging.INFO)
+
     conf_list = []
     for conffile in cfg_files:
         conf_list.append('--config-file')
@@ -351,10 +362,6 @@ def main():
     config.init(conf_list)
     nuage_config.nuage_register_cfg_opts()
 
-    # Create a logfile
-    log_dir = os.path.expanduser('~') + '/nuageupgrade'
-    if not os.path.exists(log_dir):
-        os.makedirs(log_dir)
 
     server = cfg.CONF.RESTPROXY.server
     serverauth = cfg.CONF.RESTPROXY.serverauth
@@ -363,12 +370,6 @@ def main():
     auth_resource = cfg.CONF.RESTPROXY.auth_resource
     organization = cfg.CONF.RESTPROXY.organization
     cms_id = cfg.CONF.RESTPROXY.cms_id
-
-    hdlr = logging.FileHandler(log_dir + '/upgrade.log')
-    formatter = logging.Formatter('%(asctime)s %(levelname)s %(message)s')
-    hdlr.setFormatter(formatter)
-    LOG.addHandler(hdlr)
-    logging.basicConfig(level=logging.INFO)
 
     nuageclientinst = importutils.import_module('nuagenetlib.nuageclient')
     try:
