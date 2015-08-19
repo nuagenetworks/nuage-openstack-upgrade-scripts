@@ -74,7 +74,7 @@ def init_logger():
 
 def init_arg_parser():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--config-file', action='store',
+    parser.add_argument('--config-file', action='store', required=True,
                         help='The location of the nuage_plugin.ini file')
     parser.add_argument('--name', action='store',
                         default=DEFAULT_CMS_NAME,
@@ -84,7 +84,7 @@ def init_arg_parser():
     return parser
 
 
-if __name__ == '__main__':
+def main():
     init_logger()
     parser = init_arg_parser()
     args = parser.parse_args()
@@ -98,7 +98,7 @@ if __name__ == '__main__':
     if cms_id and not args.overwrite:
         LOG.warn('Existing cms_id found in configuration. use --overwrite '
                  'to overwrite existing values.')
-        sys.exit(1)
+        return
 
     server = plugin_config.get('restproxy', 'server')
     base_uri = plugin_config.get('restproxy', 'base_uri')
@@ -108,17 +108,17 @@ if __name__ == '__main__':
     organization = plugin_config.get('restproxy', 'organization')
 
     try:
-        nuageclient = nuageclient.NuageClient(server=server,
-                                              base_uri=base_uri,
-                                              serverssl=serverssl,
-                                              serverauth=serverauth,
-                                              auth_resource=auth_resource,
-                                              organization=organization)
+        client = nuageclient.NuageClient(server=server,
+                                         base_uri=base_uri,
+                                         serverssl=serverssl,
+                                         serverauth=serverauth,
+                                         auth_resource=auth_resource,
+                                         organization=organization)
     except Exception as e:
         LOG.error('Error in connecting to VSD:%s' % str(e))
         sys.exit(1)
 
-    cms = nuageclient.create_cms(args.name)
+    cms = client.create_cms(args.name)
     if not cms:
         LOG.error('Failed to create CMS on VSD.')
         sys.exit(1)
@@ -128,3 +128,6 @@ if __name__ == '__main__':
 
     LOG.info('created CMS %s' % cms_id)
     plugin_config.write_file()
+
+if __name__ == '__main__':
+    main()
