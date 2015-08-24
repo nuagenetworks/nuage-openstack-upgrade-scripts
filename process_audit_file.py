@@ -71,7 +71,12 @@ class CmsUpdateExternalIDs(object):
 
     def upgrade_cms_id(self):
         put = self.restproxy.rest_call
-        for delta in self.discrepancies:
+        LOG.info("Processing %s updates..." % len(self.discrepancies))
+        for idx, delta in enumerate(self.discrepancies):
+            if (1 + idx) % 100 == 0:
+                percent = (100 * (idx + 1) / len(self.discrepancies))
+                LOG.info("Processing update #%s (%s%%)." % (idx + 1, percent))
+
             resource = ENTITY_TYPE_TO_URL.get(delta.get('vsp_type'))
             id = delta.get('vsp_id')
             description = delta.get('description')
@@ -89,6 +94,7 @@ class CmsUpdateExternalIDs(object):
             except Exception:
                 msg = "Error setting cms ID for %s %s" % (resource, id)
                 LOG.exception(msg)
+        LOG.info("Processing finished")
 
     def read_audit_file(self, file):
         with open(file, 'r') as in_stream:
@@ -99,10 +105,10 @@ class CmsUpdateExternalIDs(object):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--audit-file",
+    parser.add_argument("--audit-file", required=True,
                         help='A audit file from CloudStack sync or '
                              'generate_audit_file.py')
-    parser.add_argument("--config-file",
+    parser.add_argument("--config-file", required=True,
                         help='Config file containing [restproxy] with vsd '
                              'connection data')
     args = parser.parse_args()
@@ -116,6 +122,17 @@ def main():
     if cfg_file is None:
         parser.print_help()
         return
+    # Create a logfile
+    log_dir = os.path.expanduser('~') + '/nuageupgrade'
+    if not os.path.exists(log_dir):
+        os.makedirs(log_dir)
+
+    hdlr = logging.FileHandler(log_dir + '/upgrade.log')
+    formatter = logging.Formatter('%(asctime)s %(levelname)s %(message)s')
+    hdlr.setFormatter(formatter)
+    LOG.addHandler(hdlr)
+    logging.basicConfig(level=logging.INFO)
+
     if not os.path.isfile(cfg_file):
         LOG.error('File "%s" cannot be found.' % cfg_file)
         sys.exit(1)
@@ -127,10 +144,6 @@ def main():
     cfg.CONF(conf_list)
     vsdclient_config.nuage_register_cfg_opts()
 
-    # Create a logfile
-    log_dir = os.path.expanduser('~') + '/nuageupgrade'
-    if not os.path.exists(log_dir):
-        os.makedirs(log_dir)
 
     server = cfg.CONF.RESTPROXY.server
     serverauth = cfg.CONF.RESTPROXY.serverauth
@@ -138,12 +151,6 @@ def main():
     base_uri = cfg.CONF.RESTPROXY.base_uri
     auth_resource = cfg.CONF.RESTPROXY.auth_resource
     organization = cfg.CONF.RESTPROXY.organization
-
-    hdlr = logging.FileHandler(log_dir + '/upgrade.log')
-    formatter = logging.Formatter('%(asctime)s %(levelname)s %(message)s')
-    hdlr.setFormatter(formatter)
-    LOG.addHandler(hdlr)
-    logging.basicConfig(level=logging.INFO)
 
     try:
         restproxy = RESTProxyServer(server=server,
