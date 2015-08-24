@@ -74,6 +74,12 @@ class CmsAuditor(db_base_plugin_v2.NeutronDbPluginV2,
                        'vsp_id': str(vsp_id)}
         self.discrepancies.append(discrepancy)
 
+    def _check_response(self, response, url):
+        if response[0] not in REST_SUCCESS_CODES:
+            LOG.warn("%s returned code %s" % (url, response[0]))
+            return False
+        return True
+
     def audit_subnets(self):
         LOG.info("Checking subnets.")
         query = self.context.session.query(nuage_models.SubnetL2Domain)
@@ -81,13 +87,19 @@ class CmsAuditor(db_base_plugin_v2.NeutronDbPluginV2,
 
         url = '/subnets'
         response = self.get(url, '')
-        nuage_subnets = response[3]
+        if not self._check_response(response, url):
+            nuage_subnets = []
+        else:
+            nuage_subnets = response[3]
         nuageid_nuagesubnet_map = dict([(subnet['externalID'], subnet)
                                        for subnet in nuage_subnets])
 
         url = '/l2domains'
         response = self.get(url, '')
-        l2domains = response[3]
+        if not self._check_response(response, url):
+            l2domains = []
+        else:
+            l2domains = response[3]
         nuageid_nuagel2domain_map = dict([(l2domain['externalID'], l2domain)
                                          for l2domain in l2domains])
         for idx, subnet in enumerate(subnets):
@@ -118,7 +130,10 @@ class CmsAuditor(db_base_plugin_v2.NeutronDbPluginV2,
 
         url = '/domains'
         response = self.get(url, '')
-        domains = response[3]
+        if not self._check_response(response, url):
+            domains = []
+        else:
+            domains = response[3]
         nuageid_nuagedomain_map = dict([(domain['externalID'], domain)
                                         for domain in domains])
         for idx, router in enumerate(routers):
@@ -190,14 +205,18 @@ class CmsAuditor(db_base_plugin_v2.NeutronDbPluginV2,
 
     def _audit_gress(self, gress_type, url, sg_id):
         response = self.get(url, '')
+        if not self._check_response(response, url):
+            return
         if not response[3]:
             LOG.error("No response from %s." % url)
-            pass
+            return
         template = response[3][0]
         template_id = template['ID']
         url = ('/%sgressacltemplates/%s/%sgressaclentrytemplates'
                % (gress_type, template_id, gress_type))
         response = self.get(url, '')
+        if not self._check_response(response, url):
+            return
         for acl_entry_template in response[3]:
             if sg_id == acl_entry_template['externalID']:
                 vsp_type = "%sGRESS_ACLTEMPLATES_ENTRIES" % gress_type.upper()
@@ -235,7 +254,10 @@ class CmsAuditor(db_base_plugin_v2.NeutronDbPluginV2,
                                    for port in neutron_ports])
         url = '/floatingips'
         response = self.get(url, '')
-        floatingips = response[3]
+        if not self._check_response(response, url):
+            floatingips = []
+        else:
+            floatingips = response[3]
         neutronid_nuagefip_map = dict([(fip['externalID'], fip)
                                        for fip in floatingips])
 
@@ -260,7 +282,10 @@ class CmsAuditor(db_base_plugin_v2.NeutronDbPluginV2,
                                                 "externalID IS '%s'" %
                                                 fip['port_id'])
                                         })
-                    vport = response[3][0] if response[3] else None
+                    if not self._check_response(response, url):
+                        vport = None
+                    else:
+                        vport = response[3][0] if response[3] else None
                     if vport:
                         vport_id = vport['ID']
                     else:
@@ -272,7 +297,10 @@ class CmsAuditor(db_base_plugin_v2.NeutronDbPluginV2,
                             itf_url = ('/subnets/%s/vminterfaces'
                                        % nuage_subnet_id)
                         response = self.get(itf_url, '')
-                        vminterfaces = response[3]
+                        if not self._check_response(response, url):
+                            vminterfaces = []
+                        else:
+                            vminterfaces = response[3]
                         for vminterface in vminterfaces:
                             if vminterface['externalID'] == fip['port_id']:
                                 vport_id = vminterface['VPortID']
@@ -280,6 +308,8 @@ class CmsAuditor(db_base_plugin_v2.NeutronDbPluginV2,
                     if not vport_id:
                         continue
                     url = '/vports/%s/qos' % vport_id
+                    if not self._check_response(response, url):
+                        continue
                     response = self.get(url, '')
                     for qos in response[3]:
                         if qos['externalID'] == fip['id']:
@@ -309,12 +339,22 @@ class CmsAuditor(db_base_plugin_v2.NeutronDbPluginV2,
                 if not subnet:
                     continue
                 url_args = (subnet['nuage_subnet_id'])
-                if subnet['nuage_l2dom_tmplt_id']:
+                if subnet['nuage_managed_subnet']:
                     url = '/l2domains/%s/vports' % url_args
+                    response = self.get(url, '')
+                    if response[0] not in REST_SUCCESS_CODES:
+                        url = '/subnets/%s/vports' % url_args
+                        response = self.get(url, '')
+                elif subnet['nuage_l2dom_tmplt_id']:
+                    url = '/l2domains/%s/vports' % url_args
+                    response = self.get(url, '')
                 else:
                     url = '/subnets/%s/vports' % url_args
-                response = self.get(url, '')
-                vports = response[3]
+                    response = self.get(url, '')
+                if not self._check_response(response, url):
+                    vports = []
+                else:
+                    vports = response[3]
                 for vport in vports:
                     if vport['externalID'] == port['id']:
                         self.add_descrepancy("VPORT", vport['ID'])
@@ -333,7 +373,10 @@ class CmsAuditor(db_base_plugin_v2.NeutronDbPluginV2,
         networks = self.get_networks(self.context, filters=filter)
         url = '/sharednetworkresources'
         response = self.get(url, '')
-        shared_resources = response[3]
+        if not self._check_response(response, url):
+            shared_resources = []
+        else:
+            shared_resources = response[3]
         subnet_sharedresource_map = dict([(resource['externalID'], resource)
                                           for resource in shared_resources])
 
@@ -353,7 +396,10 @@ class CmsAuditor(db_base_plugin_v2.NeutronDbPluginV2,
         networks = self.get_networks(self.context)
         url = '/domains'
         response = self.get(url, '')
-        l3domains = response[3]
+        if not self._check_response(response, url):
+            l3domains = []
+        else:
+            l3domains = response[3]
         ext_id_domain_map = dict([(domain['externalID'], domain)
                                   for domain in l3domains])
         for idx, network in enumerate(networks):
