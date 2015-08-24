@@ -57,7 +57,10 @@ class PopulateIDs(db_base_plugin_v2.NeutronDbPluginV2,
 
     def __init__(self, nuageclient):
         self.context = ncontext.get_admin_context()
-        self.nuageclient = nuageclient
+         try:
+            self.rest_call = nuageclient.rest_call
+        except AttributeError:
+            self.rest_call = nuageclient.restproxy.rest_call 
 
     def get_error_msg(self, responsedata):
         errors = json.loads(responsedata)
@@ -68,7 +71,7 @@ class PopulateIDs(db_base_plugin_v2.NeutronDbPluginV2,
         routers = query.all()
         for router in routers:
             try:
-                response = self.nuageclient.rest_call(
+                response = self.rest_call(
                     'GET',
                     "/domains/" + router['nuage_router_id'], '')
                 if response[0] not in REST_SUCCESS_CODES:
@@ -133,10 +136,12 @@ def main():
 
     nuageclientinst = importutils.import_module('nuagenetlib.nuageclient')
     try:
-        nuageclient = nuageclientinst.NuageClient(server, base_uri,
-                                                  serverssl, serverauth,
-                                                  auth_resource,
-                                                  organization)
+        nuageclient = nuageclientinst.NuageClient(server=server,
+                                                  base_uri=base_uri,
+                                                  serverssl=serverssl,
+                                                  serverauth=serverauth,
+                                                  auth_resource=auth_resource,
+                                                  organization=organization)
     except Exception as e:
         LOG.error("Error in connecting to VSD:%s", str(e))
         return
