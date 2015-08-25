@@ -57,10 +57,10 @@ class PopulateIDs(db_base_plugin_v2.NeutronDbPluginV2,
 
     def __init__(self, nuageclient):
         self.context = ncontext.get_admin_context()
-         try:
+        try:
             self.rest_call = nuageclient.rest_call
         except AttributeError:
-            self.rest_call = nuageclient.restproxy.rest_call 
+            self.rest_call = nuageclient.restproxy.rest_call
 
     def get_error_msg(self, responsedata):
         errors = json.loads(responsedata)
