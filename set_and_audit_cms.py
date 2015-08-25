@@ -19,13 +19,25 @@ def main():
                 args.plugin_config_file]
     generate_cms_id.main()
 
-    sys.argv = [sys.argv[0], '--config-file', args.plugin_config_file,
-                args.neutron_config_file]
-    generate_audit_file.main()
+    try:
+        sys.argv = [sys.argv[0], '--config-file', args.plugin_config_file,
+                    args.neutron_config_file]
+        generate_audit_file.main()
+    except Exception as e:
+        print e
+        print ("Caution: An error occurred after generating a cms ID. Please "
+               "remove the cms_id entry in %s" % args.plugin_config_file)
+        sys.exit(1)
 
-    sys.argv = [sys.argv[0], '--audit-file', 'audit.yaml', '--config-file',
-                args.plugin_config_file]
-    process_audit_file.main()
+    try:
+        sys.argv = [sys.argv[0], '--audit-file', 'audit.yaml', '--config-file',
+                    args.plugin_config_file]
+        process_audit_file.main()
+    except Exception as e:
+        print e
+        print ("Caution: An error occurred while updating cms values in VSD. "
+               "Please contact your vendor.")
+        sys.exit(1)
 
 
 if __name__ == '__main__':
