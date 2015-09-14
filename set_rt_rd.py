@@ -89,7 +89,7 @@ class PopulateIDs(db_base_plugin_v2.NeutronDbPluginV2,
                         nuagedb.update_entrouter_mapping(ent_rtr_mapping,
                                                          ns_dict)
                         LOG.debug("RT/RD set successfully in neutron for router"
-                                  "%s" % router['router_id'])
+                                  " %s" % router['router_id'])
             except Exception:
                 LOG.error("Error in setting RT/RD for router %s" % router[
                     'router_id'])
@@ -150,7 +150,7 @@ def main():
         PopulateIDs(nuageclient).populate_rt_rd()
         LOG.debug("Setting rt/rd is now complete")
     except Exception as e:
-        LOG.error("Error in seting rt/rd:%s", str(e))
+        LOG.error("Error in setting rt/rd:%s", str(e))
         return
 
 if __name__ == '__main__':
