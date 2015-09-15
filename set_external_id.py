@@ -191,7 +191,7 @@ class PopulateIDs(db_base_plugin_v2.NeutronDbPluginV2,
                     self.context.session,
                     route['router_id'])
                 data = {
-                    'externalID': ent_rtr_mapping['nuage_router_id']
+                    'externalID': ent_rtr_mapping['router_id']
                 }
 
                 response = self.nuageclient.rest_call(
