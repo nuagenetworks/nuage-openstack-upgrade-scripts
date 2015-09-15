@@ -297,9 +297,15 @@ class PopulateIDs(db_base_plugin_v2.NeutronDbPluginV2,
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--config-file", nargs='+',
-                        help='List of config files separated by space')
+    requiredNamed = parser.add_argument_group('mandatory arguments')
+    requiredNamed.add_argument("--config-file",
+                               nargs='+',
+                               help='List of config files separated by space')
     args = parser.parse_args()
+
+    if sys.argv[1:].count('--config-file') != 1:
+        parser.print_help()
+        return
 
     conffiles = args.config_file
     if conffiles is None:
