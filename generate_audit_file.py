@@ -188,6 +188,9 @@ class CmsAuditor(db_base_plugin_v2.NeutronDbPluginV2,
             if (1 + idx) % 100 == 0:
                 percent = (100 * (idx + 1) / len(sgs))
                 LOG.info("Processing acl entry templates... (%s%%)." % percent)
+            filter = {'security_group_id': [sg['id']]}
+            sg_rules = self.get_security_group_rules(self.context,
+                                                     filters=filter)
             pol_group = sg_polgroup_map.get(sg['id'])
             if not pol_group:
                 continue
@@ -199,11 +202,11 @@ class CmsAuditor(db_base_plugin_v2.NeutronDbPluginV2,
             else:
                 in_url = '/domains/%s/ingressacltemplates' % domain_id
                 eg_url = '/domains/%s/egressacltemplates' % domain_id
-            self._audit_gress('in', in_url, sg['id'])
-            self._audit_gress('e', eg_url, sg['id'])
+            self._audit_gress('in', in_url, sg_rules)
+            self._audit_gress('e', eg_url, sg_rules)
         LOG.info("Acl entry templates done.")
 
-    def _audit_gress(self, gress_type, url, sg_id):
+    def _audit_gress(self, gress_type, url, sg_rules):
         response = self.get(url, '')
         if not self._check_response(response, url):
             return
@@ -218,9 +221,11 @@ class CmsAuditor(db_base_plugin_v2.NeutronDbPluginV2,
         if not self._check_response(response, url):
             return
         for acl_entry_template in response[3]:
-            if sg_id == acl_entry_template['externalID']:
-                vsp_type = "%sGRESS_ACLTEMPLATES_ENTRIES" % gress_type.upper()
-                self.add_descrepancy(vsp_type, acl_entry_template['ID'])
+            for sg_rule in sg_rules:
+                if sg_rule['id'] == acl_entry_template['externalID']:
+                    vsp_type = ("%sGRESS_ACLTEMPLATES_ENTRIES"
+                                % gress_type.upper())
+                    self.add_descrepancy(vsp_type, acl_entry_template['ID'])
 
     def audit_policygroups(self):
         LOG.info("Checking policy groups.")
