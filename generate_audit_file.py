@@ -166,8 +166,7 @@ class CmsAuditor(db_base_plugin_v2.NeutronDbPluginV2,
                 continue
 
             for route in response[3]:
-                # weird, externalID = nuage ID
-                if not route['externalID'] == router['nuage_router_id']:
+                if route['externalID'] == router['router_id']:
                     self.add_descrepancy('STATICROUTE', route['ID'])
         LOG.info("Static routes done.")
 
