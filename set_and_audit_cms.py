@@ -2,6 +2,7 @@ import argparse
 import generate_audit_file
 import generate_cms_id
 import process_audit_file
+import set_external_vport_id
 import sys
 
 
@@ -15,6 +16,17 @@ def main():
                         default=generate_cms_id.DEFAULT_CMS_NAME,
                         help='The name of the CMS to create on VSD')
     args = parser.parse_args()
+
+    try:
+        sys.argv = [sys.argv[0], '--config-file', args.plugin_config_file,
+                    args.neutron_config_file]
+        set_external_vport_id.main()
+    except Exception as e:
+        print e
+        print ("Caution: An error occurred during setting ExternalID for Vport"
+               ". Please contact your vendor.")
+        sys.exit(1)
+
     sys.argv = [sys.argv[0], '--name', args.name, '--config-file',
                 args.plugin_config_file]
     generate_cms_id.main()
