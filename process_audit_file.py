@@ -145,7 +145,6 @@ def main():
     cfg.CONF(conf_list)
     vsdclient_config.nuage_register_cfg_opts()
 
-
     server = cfg.CONF.RESTPROXY.server
     serverauth = cfg.CONF.RESTPROXY.serverauth
     serverssl = cfg.CONF.RESTPROXY.serverssl

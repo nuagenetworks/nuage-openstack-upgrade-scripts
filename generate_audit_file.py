@@ -460,7 +460,6 @@ def main():
     config.init(conf_list)
     nuage_config.nuage_register_cfg_opts()
 
-
     server = cfg.CONF.RESTPROXY.server
     serverauth = cfg.CONF.RESTPROXY.serverauth
     serverssl = cfg.CONF.RESTPROXY.serverssl
