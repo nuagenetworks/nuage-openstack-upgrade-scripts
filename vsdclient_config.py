@@ -29,7 +29,10 @@ restproxy_opts = [
                      "network resources using openstack")),
     cfg.StrOpt('auth_resource', default='',
                help=("Nuage provided uri for initial authorization to "
-                     "access VSD"))
+                     "access VSD")),
+    cfg.StrOpt('cms_id', default=None,
+               help=("ID of a Cloud Management System on the VSD which "
+                     "identifies this OpenStack instance"))
 ]
 
 

@@ -18,6 +18,7 @@ import logging
 import logging.handlers
 import os
 import sys
+import vsdclient_config
 import yaml
 
 from oslo.config import cfg
@@ -29,9 +30,7 @@ from neutron.db import extraroute_db
 from neutron.db import securitygroups_db
 from neutron.db import external_net_db
 from neutron.plugins.nuage import nuage_models
-from nuage_neutron.plugins.nuage.common import config as nuage_config
-from nuage_neutron.plugins.nuage.common import exceptions
-from oslo_utils import importutils
+from restproxy import RESTProxyServer
 
 LOG = logging.getLogger('Upgrade_Logger')
 REST_SUCCESS_CODES = range(200, 207)
@@ -41,10 +40,10 @@ class CmsAuditor(db_base_plugin_v2.NeutronDbPluginV2,
                  extraroute_db.ExtraRoute_db_mixin,
                  securitygroups_db.SecurityGroupDbMixin,
                  external_net_db.External_net_db_mixin):
-    def __init__(self, nuageclient, cms_id):
+    def __init__(self, restproxy, cms_id):
         super(CmsAuditor, self).__init__()
         self.context = ncontext.get_admin_context()
-        self.nuageclient = nuageclient
+        self.restproxy = restproxy
         self.cms_id = cms_id
         self.discrepancies = []
 
@@ -63,7 +62,7 @@ class CmsAuditor(db_base_plugin_v2.NeutronDbPluginV2,
         LOG.info("Audit Finished.")
 
     def get(self, url, data, extra_headers=None):
-        return self.nuageclient.restproxy.rest_call(
+        return self.restproxy.rest_call(
             'GET', url, data, extra_headers=extra_headers)
 
     def add_descrepancy(self, vsp_type, vsp_id,):
@@ -159,7 +158,8 @@ class CmsAuditor(db_base_plugin_v2.NeutronDbPluginV2,
             try:
                 response = self.get(url, '')
                 if response[0] not in REST_SUCCESS_CODES:
-                    raise exceptions.NuageAPIException()
+                    raise ValueError('%s did not return successfully (%s).'
+                                     % (url, response[0]))
             except Exception as e:
                 LOG.error("Error retrieving staticroutes for neutron router "
                           "%s: %s" % (router['id'], e.message))
@@ -176,7 +176,8 @@ class CmsAuditor(db_base_plugin_v2.NeutronDbPluginV2,
         try:
             response = self.get('/policygroups', '')
             if response[0] not in REST_SUCCESS_CODES:
-                raise exceptions.NuageAPIException()
+                raise ValueError('/policygroups did not return successfully '
+                                 '(%s).' % response[0])
         except Exception as e:
             LOG.error("Error retrieving policygroups: %s", e.message)
             return
@@ -232,7 +233,8 @@ class CmsAuditor(db_base_plugin_v2.NeutronDbPluginV2,
         try:
             response = self.get('/policygroups', '')
             if response[0] not in REST_SUCCESS_CODES:
-                raise exceptions.NuageAPIException()
+                raise ValueError('/policygroups did not return successfully '
+                                 '(%s).' % response[0])
         except Exception as e:
             LOG.error("Error retrieving policygroups: %s", e.message)
             return
@@ -458,7 +460,7 @@ def main():
         conf_list.append(conffile)
 
     config.init(conf_list)
-    nuage_config.nuage_register_cfg_opts()
+    vsdclient_config.nuage_register_cfg_opts()
 
     server = cfg.CONF.RESTPROXY.server
     serverauth = cfg.CONF.RESTPROXY.serverauth
@@ -468,21 +470,19 @@ def main():
     organization = cfg.CONF.RESTPROXY.organization
     cms_id = cfg.CONF.RESTPROXY.cms_id
 
-    nuageclientinst = importutils.import_module('nuagenetlib.nuageclient')
     try:
-        nuageclient = nuageclientinst.NuageClient(cms_id=cms_id,
-                                                  server=server,
-                                                  base_uri=base_uri,
-                                                  serverssl=serverssl,
-                                                  serverauth=serverauth,
-                                                  auth_resource=auth_resource,
-                                                  organization=organization)
+        restproxy = RESTProxyServer(server=server,
+                                    base_uri=base_uri,
+                                    serverssl=serverssl,
+                                    serverauth=serverauth,
+                                    auth_resource=auth_resource,
+                                    organization=organization)
 
     except Exception as e:
         LOG.error("Error in connecting to VSD:%s", str(e))
         return
 
-    CmsAuditor(nuageclient, cms_id).audit_cms_id()
+    CmsAuditor(restproxy, cms_id).audit_cms_id()
     LOG.debug("Upgrading CMS ID is now complete")
 
 

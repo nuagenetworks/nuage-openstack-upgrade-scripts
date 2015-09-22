@@ -28,7 +28,9 @@ import __builtin__
 __builtin__.__dict__['_'] = dummy
 
 
-from nuagenetlib import nuageclient
+from restproxy import RESTProxyServer
+
+REST_SUCCESS_CODES = range(200, 207)
 
 
 def get_mac():
@@ -108,22 +110,22 @@ def main():
     organization = plugin_config.get('restproxy', 'organization')
 
     try:
-        client = nuageclient.NuageClient(server=server,
-                                         base_uri=base_uri,
-                                         serverssl=serverssl,
-                                         serverauth=serverauth,
-                                         auth_resource=auth_resource,
-                                         organization=organization)
+        restproxy = RESTProxyServer(server=server,
+                                    base_uri=base_uri,
+                                    serverssl=serverssl,
+                                    serverauth=serverauth,
+                                    auth_resource=auth_resource,
+                                    organization=organization)
     except Exception as e:
         LOG.error('Error in connecting to VSD:%s' % str(e))
         sys.exit(1)
 
-    cms = client.create_cms(args.name)
-    if not cms:
+    response = restproxy.rest_call('POST', "/cms", {'name': args.name})
+    if response[0] not in REST_SUCCESS_CODES:
         LOG.error('Failed to create CMS on VSD.')
         sys.exit(1)
 
-    cms_id = cms['ID']
+    cms_id = response[3][0]['ID']
     plugin_config.set('restproxy', 'cms_id', cms_id)
 
     LOG.info('created CMS %s' % cms_id)

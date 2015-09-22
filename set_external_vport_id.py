@@ -17,6 +17,7 @@ import logging
 import logging.handlers
 import os
 import sys
+import vsdclient_config
 
 from oslo.config import cfg
 
@@ -24,8 +25,7 @@ from neutron.common import config
 from neutron import context as ncontext
 from neutron.db import db_base_plugin_v2
 from neutron.plugins.nuage import nuage_models
-from nuage_neutron.plugins.nuage.common import config as nuage_config
-from oslo_utils import importutils
+from restproxy import RESTProxyServer
 
 LOG = logging.getLogger('Setting external ID for Vports')
 REST_SUCCESS_CODES = range(200, 207)
@@ -33,10 +33,10 @@ REST_SUCCESS_CODES = range(200, 207)
 
 class VportSync(db_base_plugin_v2.NeutronDbPluginV2):
 
-    def __init__(self, nuageclient):
+    def __init__(self, restproxy):
         super(VportSync, self).__init__()
         self.context = ncontext.get_admin_context()
-        self.nuageclient = nuageclient
+        self.restproxy = restproxy
 
     def _check_response(self, response, url):
         if response[0] not in REST_SUCCESS_CODES:
@@ -45,7 +45,7 @@ class VportSync(db_base_plugin_v2.NeutronDbPluginV2):
         return True
 
     def get(self, url, data, extra_headers=None):
-        return self.nuageclient.restproxy.rest_call(
+        return self.restproxy.rest_call(
             'GET', url, data, extra_headers=extra_headers)
 
     def validate(self, response, resource, id):
@@ -104,7 +104,7 @@ class VportSync(db_base_plugin_v2.NeutronDbPluginV2):
                         continue
                     try:
                         data = ({'externalID': vm_interface['externalID']})
-                        response = self.nuageclient.restproxy.rest_call(
+                        response = self.restproxy.rest_call(
                             'PUT',
                             "/vports/" + vport['ID'] + "?responseChoice=1",
                             data
@@ -149,7 +149,7 @@ def main():
         conf_list.append(conffile)
 
     config.init(conf_list)
-    nuage_config.nuage_register_cfg_opts()
+    vsdclient_config.nuage_register_cfg_opts()
 
     server = cfg.CONF.RESTPROXY.server
     serverauth = cfg.CONF.RESTPROXY.serverauth
@@ -158,20 +158,19 @@ def main():
     auth_resource = cfg.CONF.RESTPROXY.auth_resource
     organization = cfg.CONF.RESTPROXY.organization
 
-    nuageclientinst = importutils.import_module('nuagenetlib.nuageclient')
     try:
-        nuageclient = nuageclientinst.NuageClient(server=server,
-                                                  base_uri=base_uri,
-                                                  serverssl=serverssl,
-                                                  serverauth=serverauth,
-                                                  auth_resource=auth_resource,
-                                                  organization=organization)
+        restproxyserver = RESTProxyServer(server=server,
+                                          base_uri=base_uri,
+                                          serverssl=serverssl,
+                                          serverauth=serverauth,
+                                          auth_resource=auth_resource,
+                                          organization=organization)
 
     except Exception as e:
         LOG.error("Error in connecting to VSD:%s", str(e))
         return
     LOG.info("Going to Start setting of external ID to Vports.")
-    VportSync(nuageclient).set_external_id_for_vports()
+    VportSync(restproxyserver).set_external_id_for_vports()
     LOG.info("Setting ExternalID for Vports on VSD is complete now")
 
 if __name__ == '__main__':
