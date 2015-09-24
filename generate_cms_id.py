@@ -81,8 +81,6 @@ def init_arg_parser():
     parser.add_argument('--name', action='store',
                         default=DEFAULT_CMS_NAME,
                         help='The name of the CMS to create on VSD')
-    parser.add_argument('--overwrite', action='store_true', default=False,
-                        help='Overwrite existing cms_id configuration')
     return parser
 
 
@@ -95,12 +93,6 @@ def main():
         LOG.error('File "%s" cannot be found.' % args.config_file)
         sys.exit(1)
     plugin_config = NuagePluginConfig(args.config_file)
-
-    cms_id = plugin_config.get('restproxy', 'cms_id')
-    if cms_id and not args.overwrite:
-        LOG.warn('Existing cms_id found in configuration. use --overwrite '
-                 'to overwrite existing values.')
-        return
 
     server = plugin_config.get('restproxy', 'server')
     base_uri = plugin_config.get('restproxy', 'base_uri')
@@ -119,6 +111,20 @@ def main():
     except Exception as e:
         LOG.error('Error in connecting to VSD:%s' % str(e))
         sys.exit(1)
+
+    cms_id = plugin_config.get('restproxy', 'cms_id')
+    if cms_id:
+        response = restproxy.rest_call('GET', '/cms/%s' % cms_id, '')
+        if not response[0] in REST_SUCCESS_CODES:
+            LOG.warn("Existing cms_id '%s' found in configuration. But CMS "
+                     "could not be validated on the VSD. Please recheck the "
+                     "configuration at '%s'" % (cms_id, args.config_file))
+            sys.exit(1)
+        else:
+            LOG.info("Existing cms_id found in configuration and validated on "
+                     "VSD. No new cms_id will be generated. '%s' is reused."
+                     % cms_id)
+            return
 
     response = restproxy.rest_call('POST', "/cms", {'name': args.name})
     if response[0] not in REST_SUCCESS_CODES:
