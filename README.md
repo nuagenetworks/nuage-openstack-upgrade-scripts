@@ -7,12 +7,12 @@ the Nuage User Documentation. Unappropriate use may change data on both OpenStac
 in inconsistent or failing system.
 
 ## Content
-- set_external_id.py - script to update VSD objects with the OpenStack UUID for the related OpenStack resource
-- set_rt_rd.py - script to update the OpenStack Neutron routers with Route Target and Route Distinghuisher values from VSD
-- set_and_audit_cms.py - parent script to run underlying CMS ID scripts
-	- generate_cms_id.py - script to allocated a unique CMS ID from the VSD 
-   	- generate_audit_file.py - script to create an audit file with VSD resources with undecorated External ID
-   	- process_audit_file.py - script to decorate all VSD resources from the audit file with the actual CMS ID
-
-	- vsdclient_config.py - helper code for CMS ID scripts
-	- restproxy.py - helper code for CMS ID scripts
+- **_set_external_id.py_** - script to update VSD objects with the OpenStack UUID for the related OpenStack resource.
+- **_set_rt_rd.py_** - script to update the OpenStack Neutron routers with Route Target and Route Distinghuisher values from VSD.
+- **_set_and_audit_cms.py_** - parent script to run the following VportSync and CMS ID scripts.
+	* **_vport_sync.py_** - script to create missing VPorts and set missing externalID of VPorts.
+	* **_generate_cms_id.py_** - script to allocated a unique CMS ID from the VSD.
+	* **_generate_audit_file.py_** - script to create an audit file with VSD resources with undecorated External ID.
+	* **_process_audit_file.py_** - script to decorate all VSD resources from the audit file with the actual CMS ID.
+	* **_vsdclient_config.py_** - helper code for CMS ID scripts.
+	* **_restproxy.py_** - helper code for CMS ID scripts.
