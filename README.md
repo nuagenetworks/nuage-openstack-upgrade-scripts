@@ -16,3 +16,4 @@ in inconsistent or failing system.
 	* **_process_audit_file.py_** - script to decorate all VSD resources from the audit file with the actual CMS ID.
 	* **_vsdclient_config.py_** - helper code for CMS ID scripts.
 	* **_restproxy.py_** - helper code for CMS ID scripts.
+- **_uninstall_nuage_plugin.py_** - script to uninstall nuage plugin and remove nuage specific components from python path.
