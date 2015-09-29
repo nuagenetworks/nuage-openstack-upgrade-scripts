@@ -14,6 +14,7 @@
 #
 
 import os
+import fnmatch
 import shutil
 import sys
 
@@ -35,6 +36,14 @@ def main():
             sys.exit(1)
         if os.path.exists(nuage_path):
             shutil.rmtree(nuage_path)
+
+        for root, dirnames, filenames in os.walk('/usr'):
+            for filename in fnmatch.filter(filenames, 'Nuage_Neutron-*.egg'):
+                if os.access(os.path.join(root, filename), os.W_OK):
+                    os.remove(os.path.join(root, filename))
+                else:
+                    print ("The user does not have sufficient privileges to delete "
+                           "%s.\n The egg file will not be deleted." % (os.path.join(root, filename)))
 
 if __name__ == '__main__':
     main()
