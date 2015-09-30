@@ -124,20 +124,20 @@ class VportSync(db_base_plugin_v2.NeutronDbPluginV2):
             vport_data['name'] = port['name']
         url_args = subnet_mapping['nuage_subnet_id']
         if subnet_mapping['nuage_managed_subnet']:
-                url = '/l2domains/%s/vports' % url_args
-                response = self.get(url, '')
-                if not self._check_response(response, url):
-                    vport_response = self.post_create_vport(url, vport_data)
-                else:
-                    url = '/subnets/%s/vports' % url_args
-                    vport_response = self.post_create_vport(url, vport_data)
-
-        elif subnet_mapping['nuage_l2dom_tmplt_id']:
-                url = '/l2domains/%s/vports' % url_args
+            url = '/l2domains/%s/vports' % url_args
+            response = self.get(url, '')
+            if self._check_response(response, url):
                 vport_response = self.post_create_vport(url, vport_data)
-        else:
+            else:
                 url = '/subnets/%s/vports' % url_args
                 vport_response = self.post_create_vport(url, vport_data)
+
+        elif subnet_mapping['nuage_l2dom_tmplt_id']:
+            url = '/l2domains/%s/vports' % url_args
+            vport_response = self.post_create_vport(url, vport_data)
+        else:
+            url = '/subnets/%s/vports' % url_args
+            vport_response = self.post_create_vport(url, vport_data)
         if not self.validate(vport_response):
             errors = json.loads(vport_response[3])
             error_code = str(errors.get('internalErrorCode', None))
