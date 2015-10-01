@@ -26,7 +26,7 @@ from neutron.common import constants
 from neutron import context as ncontext
 from neutron.db import db_base_plugin_v2
 from neutron.plugins.nuage import nuage_models
-from oslo.config import cfg
+from oslo_config import cfg
 from restproxy import RESTProxyServer
 
 LOG = logging.getLogger('VPort_Sync')
