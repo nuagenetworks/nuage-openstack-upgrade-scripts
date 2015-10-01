@@ -37,7 +37,7 @@ def main():
         if os.path.exists(nuage_path):
             shutil.rmtree(nuage_path)
 
-        for root, dirnames, filenames in os.walk('/usr'):
+        for root, dirnames, filenames in os.walk('/usr/local/lib/'):
             for filename in fnmatch.filter(filenames, 'Nuage_Neutron-*.egg'):
                 if os.access(os.path.join(root, filename), os.W_OK):
                     os.remove(os.path.join(root, filename))
