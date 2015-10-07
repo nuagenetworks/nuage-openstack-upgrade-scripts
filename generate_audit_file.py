@@ -21,7 +21,7 @@ import sys
 import vsdclient_config
 import yaml
 
-from oslo.config import cfg
+from oslo_config import cfg
 
 from neutron.common import config
 from neutron import context as ncontext

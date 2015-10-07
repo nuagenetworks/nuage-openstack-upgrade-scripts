@@ -17,7 +17,10 @@ import json
 import logging
 import logging.handlers
 import os
-from oslo.config import cfg
+try:
+    from oslo.config import cfg
+except ImportError:
+    from oslo_config import cfg
 import sys
 
 
