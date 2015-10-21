@@ -20,7 +20,7 @@ import os
 import sys
 import vsdclient_config
 import yaml
-
+from yaml import CLoader as Loader
 from oslo_config import cfg
 
 from restproxy import RESTProxyServer
@@ -36,7 +36,7 @@ ENTITY_TYPE_TO_URL = {
     'EGRESS_ACLTEMPLATES': 'egressacltemplates',
     'EGRESS_ACLTEMPLATES_ENTRIES': 'egressaclentrytemplates',
     'EGRESS_FIP_ACLTEMPLATES': 'egressfloatingipacltemplates',
-    'ENTERPRISE': 'enterprise',
+    'ENTERPRISE': 'enterprises',
     'ENTERPRISE_NTWK_MACRO': 'enterprisenetworks',
     'ENTERPRISE_PROFILE': 'enterpriseprofiles',
     'FIP_RATE_LIMITING_QOS': 'qos',
@@ -67,41 +67,74 @@ class CmsUpdateExternalIDs(object):
     def __init__(self, restproxy, audit_file):
         super(CmsUpdateExternalIDs, self).__init__()
         self.restproxy = restproxy
-        self.discrepancies = []
         self.read_audit_file(audit_file)
 
-    def upgrade_cms_id(self):
+    def upgrade_cms_id(self, discrepancy):
         put = self.restproxy.rest_call
-        LOG.info("Processing %s updates..." % len(self.discrepancies))
-        for idx, delta in enumerate(self.discrepancies):
-            if (1 + idx) % 100 == 0:
-                percent = (100 * (idx + 1) / len(self.discrepancies))
-                LOG.info("Processing update #%s (%s%%)." % (idx + 1, percent))
+        resource = ENTITY_TYPE_TO_URL.get(discrepancy.get('vsp_type'))
+        id = discrepancy.get('vsp_id')
+        description = discrepancy.get('description')
+        match = CMS_DESCRIPTION.match(description)
+        if not match:
+            return
+        cms_id = match.group(1)
+        url = "/cms/%s/%s/%s" % (cms_id, resource, id)
+        try:
+            response = put('PUT', url, '')
+            if response[0] not in REST_SUCCESS_CODES:
+                msg = ("PUT %s did not return successfully. %s"
+                       % (url, str(response[0]) + str(response[3])))
+                LOG.error(msg)
+            else:
+                LOG.info("Successfully resolved CMSID discrepancy with ID:"
+                         "%s " % discrepancy['id'])
+        except Exception:
+            msg = "Error setting cms ID for %s %s" % (resource, id)
+            LOG.exception(msg)
 
-            resource = ENTITY_TYPE_TO_URL.get(delta.get('vsp_type'))
-            id = delta.get('vsp_id')
-            description = delta.get('description')
-            match = CMS_DESCRIPTION.match(description)
-            if not match:
-                continue
-            cms_id = match.group(1)
-            url = "/cms/%s/%s/%s" % (cms_id, resource, id)
-            try:
-                response = put('PUT', url, '')
-                if response[0] not in REST_SUCCESS_CODES:
-                    msg = ("PUT %s did not return successfully. %s"
-                           % (url, str(response[0]) + str(response[3])))
-                    LOG.error(msg)
-            except Exception:
-                msg = "Error setting cms ID for %s %s" % (resource, id)
-                LOG.exception(msg)
-        LOG.info("Processing finished")
+    def convert(self, input):
+        if isinstance(input, unicode):
+            return input.encode('utf-8')
+        else:
+            return input
 
     def read_audit_file(self, file):
         with open(file, 'r') as in_stream:
-            yaml_input = yaml.load(in_stream)
-        if yaml_input:
-            self.discrepancies = yaml_input.get('discrepancies')
+            try:
+                yaml_parse = yaml.parse(in_stream, Loader=Loader)
+                for event in yaml_parse:
+                    if isinstance(event, yaml.ScalarEvent):
+                        if self.convert(event.value) == 'discrepancies':
+                            if (isinstance(yaml_parse.next(),
+                                           yaml.SequenceStartEvent)):
+                                LOG.info("Processing CMSID discrepancies"
+                                         " in the audit file...")
+                                while True:
+                                    attribute = yaml_parse.next()
+                                    if (isinstance(attribute,
+                                                   yaml.SequenceEndEvent)):
+                                        break
+                                    if isinstance(attribute, yaml.ScalarEvent):
+                                        if (self.convert(attribute.value)
+                                                == 'id'):
+                                            resource = (
+                                                {'id': self.convert(
+                                                    yaml_parse.next().value)})
+                                            next = yaml_parse.next()
+                                            while not isinstance(
+                                                    next,
+                                                    yaml.MappingEndEvent):
+                                                key = next.value
+                                                value = yaml_parse.next().value
+                                                resource[self.convert(key)] = (
+                                                    self.convert(value))
+                                            self.upgrade_cms_id(resource)
+                LOG.info("Processed all the CMSID discrepancies"
+                         " in the audit file")
+            except SyntaxError as se:
+                LOG.error("Syntax Error in the audit file:", se)
+            except Exception as e:
+                LOG.error("Error processing the audit file:", e)
 
 
 def main():
@@ -164,8 +197,7 @@ def main():
         LOG.error("Error in connecting to VSD:%s", str(e))
         return
 
-    updater = CmsUpdateExternalIDs(restproxy, audit_file)
-    updater.upgrade_cms_id()
+    CmsUpdateExternalIDs(restproxy, audit_file)
     LOG.debug("Setting CMS ID is now complete")
 
 
