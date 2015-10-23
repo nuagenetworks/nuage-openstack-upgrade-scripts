@@ -44,7 +44,7 @@ LOG = logging.getLogger('generate_cms_id')
 
 class NuagePluginConfig(object):
     def __init__(self, cfg_file_location):
-        self.config = ConfigObj(cfg_file_location)
+        self.config = ConfigObj(cfg_file_location, encoding='UTF8')
         self.config.filename = cfg_file_location
 
     def get(self, section, key):
