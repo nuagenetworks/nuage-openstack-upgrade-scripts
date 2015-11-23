@@ -119,7 +119,11 @@ def main():
         conf_list.append('--config-file')
         conf_list.append(conffile)
 
-    config.init(conf_list)
+    try:
+        config.init(conf_list)
+    except AttributeError:
+        # for stable/icehouse
+        config.parse(conf_list)
     nuage_config.nuage_register_cfg_opts()
 
     server = cfg.CONF.RESTPROXY.server
@@ -136,7 +140,8 @@ def main():
                                                   serverssl=serverssl,
                                                   serverauth=serverauth,
                                                   auth_resource=auth_resource,
-                                                  organization=organization)
+                                                  organization=organization,
+                                                  servertimeout=20)
     except Exception as e:
         LOG.error("Error in connecting to VSD:%s", str(e))
         return
