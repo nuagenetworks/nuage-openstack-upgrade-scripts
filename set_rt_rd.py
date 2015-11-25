@@ -38,17 +38,17 @@ except ImportError:
 try:
     from neutron.plugins.nuage.common import config as nuage_config
 except ImportError:
-    from nuage_neutron.plugins.nuage.common import config as nuage_config
+    from nuage_neutron.plugins.common import config as nuage_config
 
 try:
     from neutron.plugins.nuage import nuage_models
 except ImportError:
-    from nuage_neutron.plugins.nuage import nuage_models
+    from nuage_neutron.plugins.common import nuage_models
 
 try:
     from neutron.plugins.nuage import nuagedb
 except ImportError:
-    from nuage_neutron.plugins.nuage import nuagedb
+    from nuage_neutron.plugins.common import nuagedb
 
 LOG = logging.getLogger('Upgrade_Logger')
 REST_SUCCESS_CODES = range(200, 207)
