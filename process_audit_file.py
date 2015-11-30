@@ -20,7 +20,6 @@ import os
 import sys
 import vsdclient_config
 import yaml
-from yaml import CLoader as Loader
 from oslo_config import cfg
 
 from restproxy import RESTProxyServer
@@ -86,10 +85,10 @@ class CmsUpdateExternalIDs(object):
                        % (url, str(response[0]) + str(response[3])))
                 LOG.error(msg)
             else:
-                LOG.info("Successfully resolved CMSID discrepancy with ID:"
-                         "%s " % discrepancy['id'])
+                LOG.info("Successfully resolved discrepancy for the VSP ID:"
+                         "%s " % id)
         except Exception:
-            msg = "Error setting cms ID for %s %s" % (resource, id)
+            msg = "Error setting CMS ID for %s %s" % (resource, id)
             LOG.exception(msg)
 
     def convert(self, input):
@@ -101,13 +100,13 @@ class CmsUpdateExternalIDs(object):
     def read_audit_file(self, file):
         with open(file, 'r') as in_stream:
             try:
-                yaml_parse = yaml.parse(in_stream, Loader=Loader)
+                yaml_parse = yaml.parse(in_stream)
                 for event in yaml_parse:
                     if isinstance(event, yaml.ScalarEvent):
                         if self.convert(event.value) == 'discrepancies':
                             if (isinstance(yaml_parse.next(),
                                            yaml.SequenceStartEvent)):
-                                LOG.info("Processing CMSID discrepancies"
+                                LOG.info("Processing CMS ID discrepancies"
                                          " in the audit file...")
                                 while True:
                                     attribute = yaml_parse.next()
@@ -115,33 +114,28 @@ class CmsUpdateExternalIDs(object):
                                                    yaml.SequenceEndEvent)):
                                         break
                                     if isinstance(attribute, yaml.ScalarEvent):
-                                        if (self.convert(attribute.value)
-                                                == 'id'):
-                                            resource = (
-                                                {'id': self.convert(
-                                                    yaml_parse.next().value)})
-                                            next = yaml_parse.next()
-                                            while not isinstance(
-                                                    next,
-                                                    yaml.MappingEndEvent):
-                                                key = next.value
-                                                value = yaml_parse.next().value
-                                                resource[self.convert(key)] = (
-                                                    self.convert(value))
-                                            self.upgrade_cms_id(resource)
-                LOG.info("Processed all the CMSID discrepancies"
+                                        resource = {}
+                                        while not isinstance(
+                                                attribute,
+                                                yaml.MappingEndEvent):
+                                            key = attribute.value
+                                            value = yaml_parse.next().value
+                                            resource[self.convert(key)] = (
+                                                self.convert(value))
+                                            attribute = yaml_parse.next()
+                                        self.upgrade_cms_id(resource)
+                LOG.info("Processed all the CMS ID discrepancies"
                          " in the audit file")
             except SyntaxError as se:
-                LOG.error("Syntax Error in the audit file:", se)
+                LOG.error("Syntax Error in the audit file: %s", se)
             except Exception as e:
-                LOG.error("Error processing the audit file:", e)
+                LOG.error("Error processing the audit file: %s", e)
 
 
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--audit-file", required=True,
-                        help='A audit file from CloudStack sync or '
-                             'generate_audit_file.py')
+                        help='An audit file generated from the CMS')
     parser.add_argument("--config-file", required=True,
                         help='Config file containing [restproxy] with vsd '
                              'connection data')
