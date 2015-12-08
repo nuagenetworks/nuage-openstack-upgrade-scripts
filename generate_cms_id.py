@@ -128,7 +128,8 @@ def main():
 
     response = restproxy.rest_call('POST', "/cms", {'name': args.name})
     if response[0] not in REST_SUCCESS_CODES:
-        LOG.error('Failed to create CMS on VSD.')
+        LOG.error('Failed to create CMS on VSD. http code: %s, response: %s'
+                  % (response[0], response[3]))
         sys.exit(1)
 
     cms_id = response[3][0]['ID']
