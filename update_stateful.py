@@ -63,7 +63,7 @@ class UpdatePGRules(db_base_plugin_v2.NeutronDbPluginV2,
 
     def update_pg_rules(self):
         self.update_proto_any_rules()
-        self.update_icmp_rules()
+        #removing icmp update, as icmp behavior is same as 3.2 in 4.0
 
     def update_proto_any_rules(self):
         # Get all rules on VSD with externelID set to neutron 'ANY' rule
@@ -182,90 +182,6 @@ class UpdatePGRules(db_base_plugin_v2.NeutronDbPluginV2,
                                 response = (
                                     self.nuageclient.restproxy.rest_call(
                                         'DELETE', delete_in_rule, ''))
-            except Exception as e:
-                LOG.error(str(e))
-
-    def update_icmp_rules(self):
-        sgrules = sg_rules = self.get_security_group_rules(
-                        self.context,
-                        {'protocol': ['icmp']})
-        for sgrule in sgrules:
-            try:
-                ingress_url_str = ("/ingressaclentrytemplates" +
-                                   "?responseChoice=1")
-                egress_url_str = ("/egressaclentrytemplates"+
-                                  "?responseChoice=1")
-                headers = {}
-                extra_headers = "externalID IS '%s@%s'" % (sgrule['id'],
-                                                           self.cms_id)
-                headers['X-Nuage-Filter'] = extra_headers
-
-                in_response = self.nuageclient.restproxy.rest_call(
-                    'GET', ingress_url_str, '', extra_headers=headers)
-                eg_response = self.nuageclient.restproxy.rest_call(
-                    'GET', egress_url_str, '', extra_headers=headers)
-                update_rule_list = []
-                delete_rule_list = []
-                if sgrule['direction'] == 'egress':
-                    if in_response[3]:
-                        acllist = in_response[3]
-                        for key, group in itertools.groupby(
-                                acllist, lambda item: item["parentID"]):
-                            for item in group:
-                                update_rule_list.append(item['ID'])
-                    if eg_response[3]:
-                        acllist = eg_response[3]
-                        for key, group in itertools.groupby(
-                                acllist, lambda item: item["parentID"]):
-                            for item in group:
-                                delete_rule_list.append(item['ID'])
-                    for rule in update_rule_list:
-                        update_in_rule =  ("/ingressaclentrytemplates/"+rule+
-                                           "?responseChoice=1")
-                        data = {
-                            "reflexive": True,
-                            "stateful": True,
-                            "ICMPType": None,
-                            "ICMPCode": None
-                        }
-                        response = self.nuageclient.restproxy.rest_call(
-                            'PUT', update_in_rule, data=data)
-                        self.validate(response)
-                    for rule in delete_rule_list:
-                        delete_eg_rule = ("/egressaclentrytemplates/"+rule+
-                                          "?responseChoice=1")
-                        response = self.nuageclient.restproxy.rest_call(
-                            'DELETE', delete_eg_rule, '')
-                elif sgrule['direction'] == 'ingress':
-                    if eg_response[3]:
-                        acllist = eg_response[3]
-                        for key, group in itertools.groupby(
-                                acllist, lambda item: item["parentID"]):
-                            for item in group:
-                                update_rule_list.append(item['ID'])
-                    if in_response[3]:
-                        acllist = in_response[3]
-                        for key, group in itertools.groupby(
-                                acllist, lambda item: item["parentID"]):
-                            for item in group:
-                                delete_rule_list.append(item['ID'])
-                    for rule in update_rule_list:
-                        update_eg_rule =  ("/egressaclentrytemplates/"+rule+
-                                           "?responseChoice=1")
-                        data = {
-                            "reflexive": True,
-                            "stateful": True,
-                            "ICMPType": None,
-                            "ICMPCode": None
-                        }
-                        response = self.nuageclient.restproxy.rest_call(
-                            'PUT', update_eg_rule, data=data)
-                        self.validate(response)
-                    for rule in delete_rule_list:
-                        delete_in_rule = ("/ingressaclentrytemplates/"+rule+
-                                          "?responseChoice=1")
-                        response = self.nuageclient.restproxy.rest_call(
-                            'DELETE', delete_in_rule, '')
             except Exception as e:
                 LOG.error(str(e))
 
