@@ -52,7 +52,7 @@ ENTITY_TYPE_TO_URL = {
     'STATICROUTE': 'staticroutes',
     'SUBNET': 'subnets',
     'USER': 'users',
-    'VM': 'vm',
+    'VM': 'vms',
     'VM_INTERFACE': 'vminterfaces',
     'VPORT': 'vports',
     'ZONE': 'zones',
