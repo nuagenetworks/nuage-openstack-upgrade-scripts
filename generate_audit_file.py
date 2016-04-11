@@ -29,7 +29,10 @@ from neutron.db import db_base_plugin_v2
 from neutron.db import extraroute_db
 from neutron.db import securitygroups_db
 from neutron.db import external_net_db
-from neutron.plugins.nuage import nuage_models
+try:
+    from neutron.plugins.nuage import nuage_models
+except ImportError:
+    from nuage_neutron.plugins.common import nuage_models
 from restproxy import RESTProxyServer
 
 LOG = logging.getLogger('Upgrade_Logger')

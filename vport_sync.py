@@ -25,7 +25,10 @@ from neutron.common import config
 from neutron.common import constants
 from neutron import context as ncontext
 from neutron.db import db_base_plugin_v2
-from neutron.plugins.nuage import nuage_models
+try:
+    from neutron.plugins.nuage import nuage_models
+except ImportError:
+    from nuage_neutron.plugins.common import nuage_models
 from oslo_config import cfg
 from restproxy import RESTProxyServer
 
