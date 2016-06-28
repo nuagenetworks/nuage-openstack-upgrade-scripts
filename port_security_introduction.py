@@ -11,7 +11,6 @@ from sqlalchemy import create_engine
 cfg.LOG.setLevel(logging.ERROR)
 CONSOLE_LOGGING_LEVEL = logging.INFO + 1
 log_file = ""
-interrupts = True
 LOG = None
 
 """
@@ -77,28 +76,29 @@ def parse_arguments():
                         help="Path to the configuration file containing a "
                              "[database] section with a 'connection' string. "
                              "This is typically the neutron.conf file")
-    parser.add_argument("--interactive", default="True",
-                        help="Set to 'False' to have the script work "
-                             "without any interrupts asking for user "
-                             "confirmations to continue.")
     return parser
 
 
 def init_database():
-    engine = create_engine(cfg.CONF.database.connection, echo=True)
-    sql_logger = logging.getLogger("sqlalchemy.engine.base.Engine")
-    for handler in sql_logger.handlers:
-        sql_logger.removeHandler(handler)
+    cfg.CONF.database._group._opts['connection']['default'] = 'db_url'
+    try:
+        engine = create_engine(cfg.CONF.database.connection, echo=True)
+        # Must remove sqlalchemy logging handlers or it will dump to console
+        sql_logger = logging.getLogger("sqlalchemy.engine.base.Engine")
+        for handler in sql_logger.handlers:
+            sql_logger.removeHandler(handler)
+
+        engine.connect()
+    except Exception:
+        LOG.console("Can't create valid connection to neutron database.")
+        raise
     return engine
 
 
 def execute_db_queries():
     LOG.console("Connecting to database...")
     engine = init_database()
-    engine.connect()
     LOG.console("Connected.")
-    if interrupts:
-        raw_input("Press [ENTER] to begin database updates.")
     if engine.dialect.name == 'ibm_db_sa':
         engine.execute('INSERT INTO networksecuritybindings (network_id, '
                        'port_security_enabled) SELECT id, 1 FROM networks '
@@ -131,13 +131,6 @@ def main():
     LOG = logging.getLogger(__name__)
     LOG.console("Starting script to migrate existing networks and ports to be "
                 "compliant with the port-security extension.")
-
-    if args.interactive.lower() in ['false', '0']:
-        interrupts = False
-    elif args.interactive.lower() not in ['true', '1']:
-        LOG.console("Invalid --interactive argument. Expected a boolean but "
-                    "was '%s'." % args.interactive)
-        sys.exit(1)
 
     cfg_file = args.config_file
     if not os.path.isfile(cfg_file):
