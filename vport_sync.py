@@ -25,6 +25,7 @@ from neutron.common import config
 from neutron.common import constants
 from neutron import context as ncontext
 from neutron.db import db_base_plugin_v2
+from neutron.db import external_net_db
 try:
     from neutron.plugins.nuage import nuage_models
 except ImportError:
@@ -53,7 +54,8 @@ AUTO_CREATE_PORT_OWNERS = [
 ]
 
 
-class VportSync(db_base_plugin_v2.NeutronDbPluginV2):
+class VportSync(db_base_plugin_v2.NeutronDbPluginV2,
+                external_net_db.External_net_db_mixin):
 
     def __init__(self, restproxy):
         super(VportSync, self).__init__()
@@ -162,6 +164,7 @@ class VportSync(db_base_plugin_v2.NeutronDbPluginV2):
                 percent = (100 * (idx + 1) / len(ports))
                 LOG.info("Processing vports in Subnet... (%s%%)." % percent)
             vm_interface = self.get_vm_interface(port['id'])
+            network = self.get_network(self.context, port['network_id'])
             if vm_interface:
                 if self.is_vport_externalID_set(
                         vm_interface['VPortID']) is False:
@@ -177,10 +180,17 @@ class VportSync(db_base_plugin_v2.NeutronDbPluginV2):
                         LOG.error("Error while setting "
                                   "externalID for vport %(vm)s"
                                   % {'vm': vm_interface['VPortID']})
-            elif port['device_owner'] not in AUTO_CREATE_PORT_OWNERS:
+            elif (port['device_owner'] not in AUTO_CREATE_PORT_OWNERS) and (
+                  not network['router:external']):
                 subnet_id = port['fixed_ips'][0]['subnet_id']
                 subnet_mapping = query.filter_by(subnet_id=subnet_id).first()
-                self.create_port_on_nuage(port, subnet_mapping)
+                if subnet_mapping:
+                    self.create_port_on_nuage(port, subnet_mapping)
+                else:
+                    LOG.error("Error while Syncing Nuage VPorts for ports, "
+                              "Cannot find Nuage subnet mapping for subnet"
+                              " %(subnet)s"
+                              % {'subnet': port['fixed_ips'][0]['subnet_id']})
 
 
 def main():
