@@ -147,8 +147,9 @@ class SetExternalIDs(db_base_plugin_v2.NeutronDbPluginV2,
                             LOG.user("Ignoring Zone %s because it already has"
                                      " externalID %s" % (zone['ID'],
                                                          zone['externalID']))
-                        url_ext = '/zones/' + zone['ID']
-                        self.set_external_id(url_ext, external_id)
+                        else:
+                            url_ext = '/zones/' + zone['ID']
+                            self.set_external_id(url_ext, external_id)
                         self.update_resource_permissions(
                             zone, 'zone', router_details['tenant_id'])
                 self.handle_security_policies(url, external_id)
