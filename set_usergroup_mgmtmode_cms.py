@@ -73,7 +73,7 @@ def set_usergroup_mgmtmode_to_cms(nuageclient):
 
         result = nuageclient.restproxy.rest_call(
             'PUT',
-            '/groups/' + subnet['nuage_group_id'],
+            '/groups/' + subnet['nuage_group_id'] + '?responseChoice=1',
             data)
         if result[0] in REST_SUCCESS_CODES:
             LOG.debug('ManagementMode attribute successfully '
