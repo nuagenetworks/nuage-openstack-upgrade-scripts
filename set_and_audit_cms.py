@@ -43,7 +43,7 @@ def main():
 
     try:
         sys.argv = [sys.argv[0], '--audit-file', 'audit.yaml', '--config-file',
-                    args.plugin_config_file]
+                    args.plugin_config_file, args.neutron_config_file]
         process_audit_file.main()
     except Exception as e:
         print e

@@ -136,18 +136,18 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--audit-file", required=True,
                         help='An audit file generated from the CMS')
-    parser.add_argument("--config-file", required=True,
-                        help='Config file containing [restproxy] with vsd '
+    parser.add_argument("--config-file", nargs='+', required=True,
+                        help='Config file(s) containing [restproxy] with vsd '
                              'connection data')
     args = parser.parse_args()
-    cfg_file = args.config_file
+    cfg_files = args.config_file
     audit_file = args.audit_file
 
     if not audit_file:
         parser.print_help()
         return
 
-    if cfg_file is None:
+    if cfg_files is None:
         parser.print_help()
         return
     # Create a logfile
@@ -161,13 +161,16 @@ def main():
     LOG.addHandler(hdlr)
     logging.basicConfig(level=logging.INFO)
 
-    if not os.path.isfile(cfg_file):
-        LOG.error('File "%s" cannot be found.' % cfg_file)
-        sys.exit(1)
     if not os.path.isfile(audit_file):
         LOG.error('File "%s" cannot be found.' % audit_file)
         sys.exit(1)
-    conf_list = ['--config-file', cfg_file]
+    conf_list = []
+    for conffile in cfg_files:
+        conf_list.append('--config-file')
+        if not os.path.isfile(conffile):
+            LOG.error('File "%s" cannot be found.' % conffile)
+            sys.exit(1)
+        conf_list.append(conffile)
 
     cfg.CONF(conf_list)
     vsdclient_config.nuage_register_cfg_opts()

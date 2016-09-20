@@ -55,7 +55,7 @@ def set_usergroup_mgmtmode_to_cms(nuageclient):
         # Get the corresponding neutron subnet object for tenant info
         result = nuageclient.restproxy.rest_call(
             'PUT',
-            '/users/' + subnet['nuage_user_id'],
+            '/users/' + subnet['nuage_user_id'] + '?responseChoice=1',
             data)
         if result[0] in REST_SUCCESS_CODES:
             LOG.debug('ManagementMode attribute successfully '
