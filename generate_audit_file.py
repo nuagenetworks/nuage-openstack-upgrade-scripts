@@ -16,6 +16,7 @@ import argparse
 import datetime
 import logging
 import logging.handlers
+import nuage_logging
 import os
 import sys
 import vsdclient_config
@@ -26,16 +27,18 @@ from oslo_config import cfg
 from neutron.common import config
 from neutron import context as ncontext
 from neutron.db import db_base_plugin_v2
+from neutron.db import external_net_db
 from neutron.db import extraroute_db
 from neutron.db import securitygroups_db
-from neutron.db import external_net_db
 try:
     from neutron.plugins.nuage import nuage_models
 except ImportError:
     from nuage_neutron.plugins.common import nuage_models
 from restproxy import RESTProxyServer
 
-LOG = logging.getLogger('Upgrade_Logger')
+if not nuage_logging.log_file:
+    nuage_logging.init_logging('generate_audit_file')
+LOG = logging.getLogger('generate_audit_file')
 REST_SUCCESS_CODES = range(200, 207)
 
 
@@ -51,7 +54,7 @@ class CmsAuditor(db_base_plugin_v2.NeutronDbPluginV2,
         self.discrepancies = []
 
     def audit_cms_id(self):
-        LOG.info("Audit begins.")
+        LOG.user("Audit begins.")
         self.audit_subnets()
         self.audit_domains()
         self.audit_staticroutes()
@@ -62,7 +65,6 @@ class CmsAuditor(db_base_plugin_v2.NeutronDbPluginV2,
         self.audit_shared_resources()
         self.audit_applicationdomains()
         self.write_audit_file()
-        LOG.info("Audit Finished.")
 
     def get(self, url, data, extra_headers=None):
         return self.restproxy.rest_call(
@@ -78,12 +80,12 @@ class CmsAuditor(db_base_plugin_v2.NeutronDbPluginV2,
 
     def _check_response(self, response, url):
         if response[0] not in REST_SUCCESS_CODES:
-            LOG.warn("%s returned code %s" % (url, response[0]))
+            LOG.user("%s returned code %s" % (url, response[0]))
             return False
         return True
 
     def audit_subnets(self):
-        LOG.info("Checking subnets.")
+        LOG.user("Checking subnets.")
         query = self.context.session.query(nuage_models.SubnetL2Domain)
         subnets = query.all()
 
@@ -107,9 +109,9 @@ class CmsAuditor(db_base_plugin_v2.NeutronDbPluginV2,
         for idx, subnet in enumerate(subnets):
             if (1 + idx) % 100 == 0:
                 percent = (100 * (idx + 1) / len(subnets))
-                LOG.info("Processing subnets... (%s%%)." % percent)
+                LOG.user("Processing subnets... (%s%%)." % percent)
             if subnet['nuage_managed_subnet']:
-                LOG.info("externalID will not be set for subnet %s as it is a "
+                LOG.user("externalID will not be set for subnet %s as it is a "
                          "VSD managed subnet", subnet['subnet_id'])
                 continue
 
@@ -123,10 +125,10 @@ class CmsAuditor(db_base_plugin_v2.NeutronDbPluginV2,
                 l2domain = nuageid_nuagesubnet_map.get(neutron_id)
                 if l2domain:
                     self.add_descrepancy('SUBNET', nuage_id)
-        LOG.info("Subnets done.")
+        LOG.user("Subnets done.")
 
     def audit_domains(self):
-        LOG.info("Checking domains.")
+        LOG.user("Checking domains.")
         query = self.context.session.query(nuage_models.NetPartitionRouter)
         routers = query.all()
 
@@ -141,22 +143,22 @@ class CmsAuditor(db_base_plugin_v2.NeutronDbPluginV2,
         for idx, router in enumerate(routers):
             if (1 + idx) % 100 == 0:
                 percent = (100 * (idx + 1) / len(routers))
-                LOG.info("Processing domains... (%s%%)." % percent)
+                LOG.user("Processing domains... (%s%%)." % percent)
             neutron_id = router['router_id']
             nuage_id = router['nuage_router_id']
             domain = nuageid_nuagedomain_map.get(neutron_id)
             if domain:
                 self.add_descrepancy('DOMAIN', nuage_id)
-        LOG.info("Domains done.")
+        LOG.user("Domains done.")
 
     def audit_staticroutes(self):
-        LOG.info("Checking static routes.")
+        LOG.user("Checking static routes.")
         query = self.context.session.query(nuage_models.NetPartitionRouter)
         routers = query.all()
         for idx, router in enumerate(routers):
             if (1 + idx) % 100 == 0:
                 percent = (100 * (idx + 1) / len(routers))
-                LOG.info("Processing static routes... (%s%%)." % percent)
+                LOG.user("Processing static routes... (%s%%)." % percent)
             url = '/domains/%s/staticroutes' % router['nuage_router_id']
             try:
                 response = self.get(url, '')
@@ -164,17 +166,17 @@ class CmsAuditor(db_base_plugin_v2.NeutronDbPluginV2,
                     raise ValueError('%s did not return successfully (%s).'
                                      % (url, response[0]))
             except Exception as e:
-                LOG.error("Error retrieving staticroutes for neutron router "
-                          "%s: %s" % (router['id'], e.message))
+                LOG.user("Error retrieving staticroutes for neutron router "
+                         "%s: %s" % (router['id'], e.message))
                 continue
 
             for route in response[3]:
                 if route['externalID'] == router['router_id']:
                     self.add_descrepancy('STATICROUTE', route['ID'])
-        LOG.info("Static routes done.")
+        LOG.user("Static routes done.")
 
     def audit_aclentrytemplates(self):
-        LOG.info("Checking acl entry templates.")
+        LOG.user("Checking acl entry templates.")
         sgs = self.get_security_groups(self.context)
         try:
             response = self.get('/policygroups', '')
@@ -182,7 +184,7 @@ class CmsAuditor(db_base_plugin_v2.NeutronDbPluginV2,
                 raise ValueError('/policygroups did not return successfully '
                                  '(%s).' % response[0])
         except Exception as e:
-            LOG.error("Error retrieving policygroups: %s", e.message)
+            LOG.user("Error retrieving policygroups: %s", e.message)
             return
         sg_polgroup_map = dict([(pol_group['externalID'], pol_group)
                                 for pol_group in response[3]])
@@ -190,7 +192,7 @@ class CmsAuditor(db_base_plugin_v2.NeutronDbPluginV2,
         for idx, sg in enumerate(sgs):
             if (1 + idx) % 100 == 0:
                 percent = (100 * (idx + 1) / len(sgs))
-                LOG.info("Processing acl entry templates... (%s%%)." % percent)
+                LOG.user("Processing acl entry templates... (%s%%)." % percent)
             filter = {'security_group_id': [sg['id']]}
             sg_rules = self.get_security_group_rules(self.context,
                                                      filters=filter)
@@ -207,14 +209,14 @@ class CmsAuditor(db_base_plugin_v2.NeutronDbPluginV2,
                 eg_url = '/domains/%s/egressacltemplates' % domain_id
             self._audit_gress('in', in_url, sg_rules)
             self._audit_gress('e', eg_url, sg_rules)
-        LOG.info("Acl entry templates done.")
+        LOG.user("Acl entry templates done.")
 
     def _audit_gress(self, gress_type, url, sg_rules):
         response = self.get(url, '')
         if not self._check_response(response, url):
             return
         if not response[3]:
-            LOG.error("No response from %s." % url)
+            LOG.user("No response from %s." % url)
             return
         template = response[3][0]
         template_id = template['ID']
@@ -231,7 +233,7 @@ class CmsAuditor(db_base_plugin_v2.NeutronDbPluginV2,
                     self.add_descrepancy(vsp_type, acl_entry_template['ID'])
 
     def audit_policygroups(self):
-        LOG.info("Checking policy groups.")
+        LOG.user("Checking policy groups.")
         sgs = self.get_security_groups(self.context)
         try:
             response = self.get('/policygroups', '')
@@ -239,20 +241,20 @@ class CmsAuditor(db_base_plugin_v2.NeutronDbPluginV2,
                 raise ValueError('/policygroups did not return successfully '
                                  '(%s).' % response[0])
         except Exception as e:
-            LOG.error("Error retrieving policygroups: %s", e.message)
+            LOG.user("Error retrieving policygroups: %s", e.message)
             return
 
         for idx, sg in enumerate(sgs):
             if (1 + idx) % 100 == 0:
                 percent = (100 * (idx + 1) / len(sgs))
-                LOG.info("Processing policy groups... (%s%%)." % percent)
+                LOG.user("Processing policy groups... (%s%%)." % percent)
             for pol_group in response[3]:
                 if pol_group['externalID'] == sg['id']:
                     self.add_descrepancy('POLICY_GROUP', pol_group['ID'])
-        LOG.info("Policy groups done.")
+        LOG.user("Policy groups done.")
 
     def audit_floatingips(self):
-        LOG.info("Checking floating ips.")
+        LOG.user("Checking floating ips.")
         query = self.context.session.query(nuage_models.SubnetL2Domain)
         subnet_mapping = query.all()
         id_subnetmapping_map = dict([(subnet['subnet_id'], subnet)
@@ -273,7 +275,7 @@ class CmsAuditor(db_base_plugin_v2.NeutronDbPluginV2,
         for idx, fip in enumerate(neutron_fips):
             if (1 + idx) % 100 == 0:
                 percent = (100 * (idx + 1) / len(neutron_fips))
-                LOG.info("Processing floating ips... (%s%%)." % percent)
+                LOG.user("Processing floating ips... (%s%%)." % percent)
             if fip.get('port_id'):
                 port = id_neutronport_map[fip['port_id']]
                 for fixed_ip in port.get('fixed_ips'):
@@ -329,44 +331,52 @@ class CmsAuditor(db_base_plugin_v2.NeutronDbPluginV2,
             if not nuage_fip:
                 continue
             self.add_descrepancy('FLOATING_IP', nuage_fip['ID'])
-        LOG.info("Floating ips done.")
+        LOG.user("Floating ips done.")
 
     def audit_vports(self):
-        LOG.info("Checking vports.")
+        LOG.user("Checking vports.")
         query = self.context.session.query(nuage_models.SubnetL2Domain)
-        subnets = query.all()
-        id_subnet_map = dict([(subnet['subnet_id'], subnet)
-                              for subnet in subnets])
-        ports = self.get_ports(self.context)
+        subnet_mappings = query.all()
 
-        for idx, port in enumerate(ports):
-            if (1 + idx) % 100 == 0:
-                percent = (100 * (idx + 1) / len(ports))
-                LOG.info("Processing vports... (%s%%)." % percent)
-            for fixed_ip in port.get('fixed_ips'):
-                subnet = id_subnet_map.get(fixed_ip['subnet_id'])
-                if not subnet:
-                    continue
-                url_args = (subnet['nuage_subnet_id'])
-                if subnet['nuage_managed_subnet']:
-                    url = '/l2domains/%s/vports' % url_args
+        LOG.user("  Processing ports of %d subnets..."
+                 % len(subnet_mappings))
+        for subnet_mapping in subnet_mappings:
+            subnet_filter = {
+                'fixed_ips': {'subnet_id': [subnet_mapping.subnet_id]}
+            }
+            ports = self.get_ports(self.context, filters=subnet_filter)
+            LOG.user("    Processing %d ports of subnet %s ..."
+                     % (len(ports), subnet_mapping.subnet_id))
+
+            if subnet_mapping.nuage_managed_subnet:
+                url = '/l2domains/%s/vports' % subnet_mapping.nuage_subnet_id
+                response = self.get(url, '')
+                if response[0] not in REST_SUCCESS_CODES:
+                    url = '/subnets/%s/vports' % subnet_mapping.nuage_subnet_id
                     response = self.get(url, '')
-                    if response[0] not in REST_SUCCESS_CODES:
-                        url = '/subnets/%s/vports' % url_args
-                        response = self.get(url, '')
-                elif subnet['nuage_l2dom_tmplt_id']:
-                    url = '/l2domains/%s/vports' % url_args
-                    response = self.get(url, '')
-                else:
-                    url = '/subnets/%s/vports' % url_args
-                    response = self.get(url, '')
-                if not self._check_response(response, url):
-                    vports = []
-                else:
-                    vports = response[3]
-                for vport in vports:
-                    if vport['externalID'] == port['id']:
-                        self.add_descrepancy("VPORT", vport['ID'])
+            elif subnet_mapping.nuage_l2dom_tmplt_id:
+                url = '/l2domains/%s/vports' % subnet_mapping.nuage_subnet_id
+                response = self.get(url, '')
+            else:
+                url = '/subnets/%s/vports' % subnet_mapping.nuage_subnet_id
+                response = self.get(url, '')
+
+            if not self._check_response(response, url):
+                vports = []
+            else:
+                vports = response[3]
+
+            vport_mapping = dict([(vport['externalID'], vport)
+                                  for vport in vports])
+
+            for idx, port in enumerate(ports):
+                if (1 + idx) % 50 == 0:
+                    percent = (100 * (idx + 1) / len(ports))
+                    LOG.user("    Processing %d ports of subnet %s (%s%%)..."
+                             % (len(ports), subnet_mapping.subnet_id, percent))
+                vport = vport_mapping.get(port['id'])
+                if vport:
+                    self.add_descrepancy("VPORT", vport['ID'])
                     url = '/vports/%s/vminterfaces' % vport['ID']
                     response = self.get(url, '')
                     vm_interfaces = response[3]
@@ -374,10 +384,12 @@ class CmsAuditor(db_base_plugin_v2.NeutronDbPluginV2,
                         if vm_interface['externalID'] == port['id']:
                             self.add_descrepancy('VM_INTERFACE',
                                                  vm_interface['ID'])
-        LOG.info("Vports done.")
+            LOG.user("    Finished all ports of subnet %s.\n"
+                     % subnet_mapping.subnet_id)
+        LOG.user("Vports done.")
 
     def audit_shared_resources(self):
-        LOG.info("Checking shared network resources.")
+        LOG.user("Checking shared network resources.")
         filter = {'router:external': [True]}
         networks = self.get_networks(self.context, filters=filter)
         url = '/sharednetworkresources'
@@ -392,16 +404,16 @@ class CmsAuditor(db_base_plugin_v2.NeutronDbPluginV2,
         for idx, network in enumerate(networks):
             if (1 + idx) % 100 == 0:
                 percent = (100 * (idx + 1) / len(networks))
-                LOG.info("Processing shared network resources... (%s%%)."
+                LOG.user("Processing shared network resources... (%s%%)."
                          % percent)
             for subnet_id in network.get('subnets'):
                 resource = subnet_sharedresource_map.get(subnet_id)
                 if resource:
                     self.add_descrepancy('SHARED_NETWORK', resource['ID'])
-        LOG.info("Shared network resources done.")
+        LOG.user("Shared network resources done.")
 
     def audit_applicationdomains(self):
-        LOG.info("Checking application domains.")
+        LOG.user("Checking application domains.")
         networks = self.get_networks(self.context)
         url = '/domains'
         response = self.get(url, '')
@@ -414,13 +426,13 @@ class CmsAuditor(db_base_plugin_v2.NeutronDbPluginV2,
         for idx, network in enumerate(networks):
             if (1 + idx) % 100 == 0:
                 percent = (100 * (idx + 1) / len(networks))
-                LOG.info("Processing application domains... (%s%%)." % percent)
+                LOG.user("Processing application domains... (%s%%)." % percent)
             l3domain = ext_id_domain_map.get(network['id'])
             if (not l3domain
                     or l3domain['applicationDeploymentPolicy'] == 'NONE'):
                 continue
             self.add_descrepancy('DOMAIN', l3domain['ID'])
-        LOG.info("Application domains done.")
+        LOG.user("Application domains done.")
 
     def write_audit_file(self):
         now = datetime.datetime.now()
@@ -428,7 +440,7 @@ class CmsAuditor(db_base_plugin_v2.NeutronDbPluginV2,
                        'discrepancies': self.discrepancies}
         with open('audit.yaml', 'w') as out:
             out.write(yaml.dump(yaml_output, default_flow_style=False))
-        LOG.info('File "audit.yaml" created.')
+        LOG.user('File "audit.yaml" created.')
 
 
 def main():
@@ -443,22 +455,11 @@ def main():
         parser.print_help()
         return
 
-    # Create a logfile
-    log_dir = os.path.expanduser('~') + '/nuageupgrade'
-    if not os.path.exists(log_dir):
-        os.makedirs(log_dir)
-
-    hdlr = logging.FileHandler(log_dir + '/upgrade.log')
-    formatter = logging.Formatter('%(asctime)s %(levelname)s %(message)s')
-    hdlr.setFormatter(formatter)
-    LOG.addHandler(hdlr)
-    logging.basicConfig(level=logging.INFO)
-
     conf_list = []
     for conffile in cfg_files:
         conf_list.append('--config-file')
         if not os.path.isfile(conffile):
-            LOG.error('File "%s" cannot be found.' % conffile)
+            LOG.user('File "%s" cannot be found.' % conffile)
             sys.exit(1)
         conf_list.append(conffile)
 
@@ -482,11 +483,11 @@ def main():
                                     organization=organization)
 
     except Exception as e:
-        LOG.error("Error in connecting to VSD:%s", str(e))
+        LOG.user("Error in connecting to VSD:%s", str(e))
         return
 
     CmsAuditor(restproxy, cms_id).audit_cms_id()
-    LOG.debug("Upgrading CMS ID is now complete")
+    LOG.user("Audit finished")
 
 
 if __name__ == '__main__':

@@ -13,17 +13,21 @@
 #    under the License.
 
 import argparse
-import re
 import logging
 import logging.handlers
+import nuage_logging
 import os
+import re
 import sys
 import vsdclient_config
 import yaml
+
 from oslo_config import cfg
 
 from restproxy import RESTProxyServer
 
+if not nuage_logging.log_file:
+    nuage_logging.init_logging('process_audit_file')
 LOG = logging.getLogger('Upgrade_Logger')
 REST_SUCCESS_CODES = range(200, 207)
 ENTITY_TYPE_TO_URL = {
@@ -83,13 +87,13 @@ class CmsUpdateExternalIDs(object):
             if response[0] not in REST_SUCCESS_CODES:
                 msg = ("PUT %s did not return successfully. %s"
                        % (url, str(response[0]) + str(response[3])))
-                LOG.error(msg)
+                LOG.user(msg)
             else:
-                LOG.info("Successfully resolved discrepancy for the VSP ID:"
+                LOG.user("Successfully resolved discrepancy for the VSP ID:"
                          "%s " % id)
         except Exception:
             msg = "Error setting CMS ID for %s %s" % (resource, id)
-            LOG.exception(msg)
+            LOG.user(msg)
 
     def convert(self, input):
         if isinstance(input, unicode):
@@ -106,7 +110,7 @@ class CmsUpdateExternalIDs(object):
                         if self.convert(event.value) == 'discrepancies':
                             if (isinstance(yaml_parse.next(),
                                            yaml.SequenceStartEvent)):
-                                LOG.info("Processing CMS ID discrepancies"
+                                LOG.user("Processing CMS ID discrepancies"
                                          " in the audit file...")
                                 while True:
                                     attribute = yaml_parse.next()
@@ -124,12 +128,12 @@ class CmsUpdateExternalIDs(object):
                                                 self.convert(value))
                                             attribute = yaml_parse.next()
                                         self.upgrade_cms_id(resource)
-                LOG.info("Processed all the CMS ID discrepancies"
+                LOG.user("Processed all the CMS ID discrepancies"
                          " in the audit file")
             except SyntaxError as se:
-                LOG.error("Syntax Error in the audit file: %s", se)
+                LOG.user("Syntax Error in the audit file: %s", se)
             except Exception as e:
-                LOG.error("Error processing the audit file: %s", e)
+                LOG.user("Error processing the audit file: %s", e)
 
 
 def main():
@@ -150,25 +154,15 @@ def main():
     if cfg_files is None:
         parser.print_help()
         return
-    # Create a logfile
-    log_dir = os.path.expanduser('~') + '/nuageupgrade'
-    if not os.path.exists(log_dir):
-        os.makedirs(log_dir)
-
-    hdlr = logging.FileHandler(log_dir + '/upgrade.log')
-    formatter = logging.Formatter('%(asctime)s %(levelname)s %(message)s')
-    hdlr.setFormatter(formatter)
-    LOG.addHandler(hdlr)
-    logging.basicConfig(level=logging.INFO)
 
     if not os.path.isfile(audit_file):
-        LOG.error('File "%s" cannot be found.' % audit_file)
+        LOG.user('File "%s" cannot be found.' % audit_file)
         sys.exit(1)
     conf_list = []
     for conffile in cfg_files:
         conf_list.append('--config-file')
         if not os.path.isfile(conffile):
-            LOG.error('File "%s" cannot be found.' % conffile)
+            LOG.user('File "%s" cannot be found.' % conffile)
             sys.exit(1)
         conf_list.append(conffile)
 
@@ -191,11 +185,11 @@ def main():
                                     organization=organization)
 
     except Exception as e:
-        LOG.error("Error in connecting to VSD:%s", str(e))
+        LOG.user("Error in connecting to VSD:%s", str(e))
         return
-
+    LOG.user("Processing audit results...")
     CmsUpdateExternalIDs(restproxy, audit_file)
-    LOG.debug("Setting CMS ID is now complete")
+    LOG.user("Finished processing.")
 
 
 if __name__ == '__main__':

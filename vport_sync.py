@@ -16,6 +16,7 @@ import argparse
 import json
 import logging
 import logging.handlers
+import nuage_logging
 import os
 
 import sys
@@ -33,6 +34,8 @@ except ImportError:
 from oslo_config import cfg
 from restproxy import RESTProxyServer
 
+if not nuage_logging.log_file:
+    nuage_logging.init_logging('vport_sync')
 LOG = logging.getLogger('VPort_Sync')
 REST_SUCCESS_CODES = range(200, 207)
 REST_SERV_UNAVAILABLE_CODE = 503
@@ -64,7 +67,7 @@ class VportSync(db_base_plugin_v2.NeutronDbPluginV2,
 
     def _check_response(self, response, url):
         if response[0] not in REST_SUCCESS_CODES:
-            LOG.warn("%s returned code %s" % (url, response[0]))
+            LOG.user("%s returned code %s" % (url, response[0]))
             return False
         return True
 
@@ -81,8 +84,8 @@ class VportSync(db_base_plugin_v2.NeutronDbPluginV2,
         if response[0] not in REST_SUCCESS_CODES:
             if response[0] == REST_SERV_UNAVAILABLE_CODE:
                 errors = json.loads(response[3])
-                LOG.error('VSD temporarily unavailable, ' +
-                          str(errors['errors']))
+                LOG.user('VSD temporarily unavailable, ' +
+                         str(errors['errors']))
             return False
         return True
 
@@ -98,8 +101,8 @@ class VportSync(db_base_plugin_v2.NeutronDbPluginV2,
             if vm_interfaces:
                 return vm_interfaces[0]
         else:
-            LOG.error("Error in retrieving associated VMInterface from VSD "
-                      "so, cannot set ExternalID for portID:" + externalID)
+            LOG.user("Error in retrieving associated VMInterface from VSD "
+                     "so, cannot set ExternalID for portID:" + externalID)
             return None
 
     def is_vport_externalID_set(self, vportid):
@@ -113,8 +116,8 @@ class VportSync(db_base_plugin_v2.NeutronDbPluginV2,
                 else:
                     return False
         else:
-            LOG.error("Error in retrieving Vport from VSD of VportID: "
-                      + vportid + " so, skipping this Vport")
+            LOG.user("Error in retrieving Vport from VSD of VportID: "
+                     + vportid + " so, skipping this Vport")
         return None
 
     def create_port_on_nuage(self, port, subnet_mapping, description=None):
@@ -147,13 +150,13 @@ class VportSync(db_base_plugin_v2.NeutronDbPluginV2,
             errors = json.loads(vport_response[3])
             error_code = str(errors.get('internalErrorCode', None))
             if error_code == '7014':
-                LOG.info("Vport for portID:" + port['id'] + " already "
-                         "exists, so skipping Vport creation for this port.")
+                LOG.debug("Vport for portID:" + port['id'] + " already "
+                          "exists, so skipping Vport creation for this port.")
             else:
                 msg = errors['errors'][0]['descriptions'][0]['description']
-                LOG.error("Error in creating Vport for the portID: "
-                          + port['id'] +
-                          " and the error message is: " + str(msg))
+                LOG.user("Error in creating Vport for the portID: "
+                         + port['id'] +
+                         " and the error message is: " + str(msg))
 
     def sync_vports(self):
         query = self.context.session.query(nuage_models.SubnetL2Domain)
@@ -162,7 +165,7 @@ class VportSync(db_base_plugin_v2.NeutronDbPluginV2,
         for idx, port in enumerate(ports):
             if (1 + idx) % 100 == 0:
                 percent = (100 * (idx + 1) / len(ports))
-                LOG.info("Processing vports in Subnet... (%s%%)." % percent)
+                LOG.user("Processing vports in Subnet... (%s%%)." % percent)
             vm_interface = self.get_vm_interface(port['id'])
             network = self.get_network(self.context, port['network_id'])
             if vm_interface:
@@ -177,9 +180,9 @@ class VportSync(db_base_plugin_v2.NeutronDbPluginV2,
                         "?responseChoice=1", data
                         )
                     if not self.validate(response):
-                        LOG.error("Error while setting "
-                                  "externalID for vport %(vm)s"
-                                  % {'vm': vm_interface['VPortID']})
+                        LOG.user("Error while setting "
+                                 "externalID for vport %(vm)s"
+                                 % {'vm': vm_interface['VPortID']})
             elif (port['device_owner'] not in AUTO_CREATE_PORT_OWNERS) and (
                   not network['router:external']):
                 subnet_id = port['fixed_ips'][0]['subnet_id']
@@ -187,10 +190,10 @@ class VportSync(db_base_plugin_v2.NeutronDbPluginV2,
                 if subnet_mapping:
                     self.create_port_on_nuage(port, subnet_mapping)
                 else:
-                    LOG.error("Error while Syncing Nuage VPorts for ports, "
-                              "Cannot find Nuage subnet mapping for subnet"
-                              " %(subnet)s"
-                              % {'subnet': port['fixed_ips'][0]['subnet_id']})
+                    LOG.user("Error while Syncing Nuage VPorts for ports, "
+                             "Cannot find Nuage subnet mapping for subnet"
+                             " %(subnet)s"
+                             % {'subnet': port['fixed_ips'][0]['subnet_id']})
 
 
 def main():
@@ -205,22 +208,11 @@ def main():
         parser.print_help()
         return
 
-    # Create a logfile
-    log_dir = os.path.expanduser('~') + '/nuageupgrade'
-    if not os.path.exists(log_dir):
-        os.makedirs(log_dir)
-
-    hdlr = logging.FileHandler(log_dir + '/vport_sync.log')
-    formatter = logging.Formatter('%(asctime)s %(levelname)s %(message)s')
-    hdlr.setFormatter(formatter)
-    LOG.addHandler(hdlr)
-    logging.basicConfig(level=logging.INFO)
-
     conf_list = []
     for conffile in cfg_files:
         conf_list.append('--config-file')
         if not os.path.isfile(conffile):
-            LOG.error('File "%s" cannot be found.' % conffile)
+            LOG.user('File "%s" cannot be found.' % conffile)
             sys.exit(1)
         conf_list.append(conffile)
 
@@ -242,11 +234,11 @@ def main():
                                     auth_resource=auth_resource,
                                     organization=organization)
     except Exception as e:
-        LOG.error("Error in connecting to VSD:%s", str(e))
+        LOG.user("Error in connecting to VSD:%s", str(e))
         return
-    LOG.info("Starting Vports Sync.")
+    LOG.user("Starting Vports Sync.")
     VportSync(restproxy).sync_vports()
-    LOG.info("Vports Sync on VSD is now complete.")
+    LOG.user("Vports Sync on VSD is now complete.")
 
 if __name__ == '__main__':
     main()

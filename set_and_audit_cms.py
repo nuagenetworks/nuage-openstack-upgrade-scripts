@@ -1,9 +1,17 @@
+import nuage_logging
+nuage_logging.init_logging('set_and_audit_cms')
+
 import argparse
+import logging
+import sys
+
 import generate_audit_file
 import generate_cms_id
 import process_audit_file
 import vport_sync
-import sys
+
+
+LOG = logging.getLogger('set_audit_cms')
 
 
 def main():
@@ -22,23 +30,27 @@ def main():
                     args.neutron_config_file]
         vport_sync.main()
     except Exception as e:
-        print e
-        print ("Caution: An error occurred during synchronizing Vports on VSD"
-               " according to OpenStack ports. Please contact your vendor.")
+        LOG.user(e)
+        LOG.user("Caution: An error occurred during synchronizing Vports on "
+                 "VSD according to OpenStack ports. Please contact your "
+                 "vendor.")
         sys.exit(1)
 
     sys.argv = [sys.argv[0], '--name', args.name, '--config-file',
                 args.plugin_config_file]
+    LOG.user("Generating cms ID if needed.")
     generate_cms_id.main()
+    LOG.user("Cms ID finished.")
 
     try:
         sys.argv = [sys.argv[0], '--config-file', args.plugin_config_file,
                     args.neutron_config_file]
         generate_audit_file.main()
     except Exception as e:
-        print e
-        print ("Caution: An error occurred after generating a cms ID. Please "
-               "remove the cms_id entry in %s" % args.plugin_config_file)
+        LOG.user(e)
+        LOG.user("Caution: An error occurred after generating a cms ID. "
+                 "Please remove the cms_id entry in %s"
+                 % args.plugin_config_file)
         sys.exit(1)
 
     try:
@@ -46,9 +58,9 @@ def main():
                     args.plugin_config_file, args.neutron_config_file]
         process_audit_file.main()
     except Exception as e:
-        print e
-        print ("Caution: An error occurred while updating cms values in VSD. "
-               "Please contact your vendor.")
+        LOG.user(e)
+        LOG.user("Caution: An error occurred while updating cms values in "
+                 "VSD. Please contact your vendor.")
         sys.exit(1)
 
 
