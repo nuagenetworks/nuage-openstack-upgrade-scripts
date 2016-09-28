@@ -1,10 +1,12 @@
 # Copyright 2015 Alcatel-Lucent USA Inc.
 # All Rights Reserved.
+from __future__ import division
 
 import base64
 import httplib
 import json
 import logging
+import math
 import socket
 import ssl
 import time
@@ -12,6 +14,7 @@ import time
 LOG = logging.getLogger(__name__)
 MAX_RETRIES = 5
 MAX_RETRIES_503 = 5
+REST_SUCCESS_CODES = range(200, 207)
 
 
 class RESTProxyBaseException(Exception):
@@ -77,7 +80,7 @@ class RESTProxyServer(object):
             LOG.error('RESTProxy: Max retries exceeded')
             # Get ready for the next set of operation
             self.retry = 0
-            return 0, None, None, None
+            return 0, None, None, None, {}
         uri = self.base_uri + resource
         body = json.dumps(data)
         headers = {}
@@ -109,14 +112,14 @@ class RESTProxyServer(object):
             if conn is None:
                 LOG.error('RESTProxy: Could not establish HTTPS '
                           'connection')
-                return 0, None, None, None
+                return 0, None, None, None, {}
         else:
             conn = httplib.HTTPConnection(
                 self.server, self.port, timeout=self.timeout)
             if conn is None:
                 LOG.error('RESTProxy: Could not establish HTTP '
                           'connection')
-                return 0, None, None, None
+                return 0, None, None, None, {}
 
         try:
             conn.request(action, uri, body, headers)
@@ -133,7 +136,8 @@ class RESTProxyServer(object):
                 except ValueError:
                     # response was not JSON, ignore the exception
                     pass
-            ret = (response.status, response.reason, respstr, respdata)
+            ret = (response.status, response.reason, respstr, respdata,
+                   dict(response.getheaders()))
         except (socket.timeout, socket.error) as e:
             LOG.error('ServerProxy: %(action)s failure, %(e)r', locals())
             # retry
@@ -171,6 +175,8 @@ class RESTProxyServer(object):
         self.auth = auth
 
     def rest_call(self, action, resource, data, extra_headers=None):
+        if action.lower() == 'get':
+            return self.get(resource, data=data, extra_headers=extra_headers)
         response = self._rest_call(action, resource, data,
                                    extra_headers=extra_headers)
         '''
@@ -180,4 +186,33 @@ class RESTProxyServer(object):
             self.generate_nuage_auth()
             return self._rest_call(action, resource, data,
                                    extra_headers=extra_headers)
+        return response
+
+    def get(self, resource, data='', extra_headers=None, page_size=500):
+        extra_headers = extra_headers or {}
+        response = self._get_page(resource, data, extra_headers, page_size, 0)
+        headers = response[4]
+        if response[0] in REST_SUCCESS_CODES and 'x-nuage-count' in headers:
+            total_objects = int(headers['x-nuage-count'])
+            total_pages = int(math.ceil(total_objects / page_size))
+            result = response[3]
+            for page in range(1, total_pages):
+                response = self._get_page(resource, data, extra_headers,
+                                          page_size, page)
+                if response[0] not in REST_SUCCESS_CODES:
+                    return response
+                result.extend(response[3])
+            return response[0], response[1], response[2], result, headers
+        else:
+            return response
+
+    def _get_page(self, resource, data, extra_headers, page_size, page):
+        extra_headers['X-Nuage-Page'] = page
+        extra_headers['X-Nuage-PageSize'] = page_size
+        response = self._rest_call('GET', resource, data,
+                                   extra_headers=extra_headers)
+        if response[0] == 401 and response[1] == 'Unauthorized':
+            self.generate_nuage_auth()
+            response = self._rest_call('GET', resource, data,
+                                       extra_headers=extra_headers)
         return response
