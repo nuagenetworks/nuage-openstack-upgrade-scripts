@@ -13,6 +13,7 @@
 #    under the License.
 import argparse
 import logging
+import nuage_logging
 import os
 import sys
 
@@ -39,6 +40,8 @@ def get_mac():
 
 
 DEFAULT_CMS_NAME = 'OpenStack_' + get_mac()
+if not nuage_logging.log_file:
+    nuage_logging.init_logging('generate_cms_id')
 LOG = logging.getLogger('generate_cms_id')
 
 
@@ -63,17 +66,6 @@ class NuagePluginConfig(object):
         self.config.write()
 
 
-def init_logger():
-    log_dir = os.path.expanduser('~') + '/nuageupgrade'
-    if not os.path.exists(log_dir):
-        os.makedirs(log_dir)
-    hdlr = logging.FileHandler(log_dir + '/generate_cms_id.log')
-    formatter = logging.Formatter('%(asctime)s %(levelname)s %(message)s')
-    hdlr.setFormatter(formatter)
-    LOG.addHandler(hdlr)
-    logging.basicConfig(level=logging.INFO)
-
-
 def init_arg_parser():
     parser = argparse.ArgumentParser()
     parser.add_argument('--config-file', action='store', required=True,
@@ -85,12 +77,11 @@ def init_arg_parser():
 
 
 def main():
-    init_logger()
     parser = init_arg_parser()
     args = parser.parse_args()
 
     if not os.path.isfile(args.config_file):
-        LOG.error('File "%s" cannot be found.' % args.config_file)
+        LOG.user('File "%s" cannot be found.' % args.config_file)
         sys.exit(1)
     plugin_config = NuagePluginConfig(args.config_file)
 
@@ -109,33 +100,33 @@ def main():
                                     auth_resource=auth_resource,
                                     organization=organization)
     except Exception as e:
-        LOG.error('Error in connecting to VSD:%s' % str(e))
+        LOG.user('Error in connecting to VSD:%s' % str(e))
         sys.exit(1)
 
     cms_id = plugin_config.get('restproxy', 'cms_id')
     if cms_id:
         response = restproxy.rest_call('GET', '/cms/%s' % cms_id, '')
         if not response[0] in REST_SUCCESS_CODES:
-            LOG.warn("Existing cms_id '%s' found in configuration. But CMS "
+            LOG.user("Existing cms_id '%s' found in configuration. But CMS "
                      "could not be validated on the VSD. Please recheck the "
                      "configuration at '%s'" % (cms_id, args.config_file))
             sys.exit(1)
         else:
-            LOG.info("Existing cms_id found in configuration and validated on "
+            LOG.user("Existing cms_id found in configuration and validated on "
                      "VSD. No new cms_id will be generated. '%s' is reused."
                      % cms_id)
             return
 
     response = restproxy.rest_call('POST', "/cms", {'name': args.name})
     if response[0] not in REST_SUCCESS_CODES:
-        LOG.error('Failed to create CMS on VSD. http code: %s, response: %s'
-                  % (response[0], response[3]))
+        LOG.user('Failed to create CMS on VSD. http code: %s, response: %s'
+                 % (response[0], response[3]))
         sys.exit(1)
 
     cms_id = response[3][0]['ID']
     plugin_config.set('restproxy', 'cms_id', cms_id)
 
-    LOG.info('created CMS %s' % cms_id)
+    LOG.user('created CMS %s' % cms_id)
     plugin_config.write_file()
 
 if __name__ == '__main__':
