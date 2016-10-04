@@ -74,6 +74,7 @@ class RESTProxyServer(object):
         self.retry_503 = 0
         self.auth = None
         self.success_codes = range(200, 207)
+        self.generate_nuage_auth()
 
     def _rest_call(self, action, resource, data, extra_headers=None):
         if self.retry >= MAX_RETRIES:
