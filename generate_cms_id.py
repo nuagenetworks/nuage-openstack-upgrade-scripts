@@ -11,6 +11,8 @@
 #    WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
 #    License for the specific language governing permissions and limitations
 #    under the License.
+
+import __builtin__
 import argparse
 import logging
 import nuage_logging
@@ -18,18 +20,16 @@ import os
 import sys
 
 from configobj import ConfigObj
-
+from restproxy import RESTProxyServer
 from uuid import getnode
 
 
 def dummy(msg):
     return msg
 
-import __builtin__
+
 __builtin__.__dict__['_'] = dummy
 
-
-from restproxy import RESTProxyServer
 
 REST_SUCCESS_CODES = range(200, 207)
 
@@ -128,6 +128,7 @@ def main():
 
     LOG.user('created CMS %s' % cms_id)
     plugin_config.write_file()
+
 
 if __name__ == '__main__':
     main()

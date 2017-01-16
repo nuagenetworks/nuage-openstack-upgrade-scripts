@@ -42,8 +42,10 @@ def main():
                 if os.access(os.path.join(root, filename), os.W_OK):
                     os.remove(os.path.join(root, filename))
                 else:
-                    print ("The user does not have sufficient privileges to delete "
-                           "%s.\n The egg file will not be deleted." % (os.path.join(root, filename)))
+                    print ("The user does not have sufficient privileges to "
+                           "delete %s.\n The egg file will not be deleted." %
+                           (os.path.join(root, filename)))
+
 
 if __name__ == '__main__':
     main()
