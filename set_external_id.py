@@ -52,6 +52,10 @@ class PopulateIDs(db_base_plugin_v2.NeutronDbPluginV2,
                   extraroute_db.ExtraRoute_db_mixin,
                   securitygroups_db.SecurityGroupDbMixin):
 
+    @staticmethod
+    def __new__(cls, *args, **kwargs):
+        return super(PopulateIDs, cls).__new__(cls)
+
     def __init__(self, restproxy):
         self.context = ncontext.get_admin_context()
         self.restproxy = restproxy

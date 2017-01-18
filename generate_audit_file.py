@@ -45,6 +45,11 @@ class CmsAuditor(db_base_plugin_v2.NeutronDbPluginV2,
                  extraroute_db.ExtraRoute_db_mixin,
                  securitygroups_db.SecurityGroupDbMixin,
                  external_net_db.External_net_db_mixin):
+
+    @staticmethod
+    def __new__(cls, *args, **kwargs):
+        return super(CmsAuditor, cls).__new__(cls)
+
     def __init__(self, restproxy, cms_id):
         super(CmsAuditor, self).__init__()
         self.context = ncontext.get_admin_context()
@@ -166,7 +171,7 @@ class CmsAuditor(db_base_plugin_v2.NeutronDbPluginV2,
                                      % (url, response[0]))
             except Exception as e:
                 LOG.user("Error retrieving staticroutes for neutron router "
-                         "%s: %s" % (router['id'], e.message))
+                         "%s: %s" % (router['router_id'], e.message))
                 continue
 
             for route in response[3]:
