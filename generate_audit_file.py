@@ -15,6 +15,7 @@
 import argparse
 import datetime
 import logging
+import logging.handlers
 import nuage_logging
 import os
 import sys
@@ -432,8 +433,8 @@ class CmsAuditor(db_base_plugin_v2.NeutronDbPluginV2,
                 percent = (100 * (idx + 1) / len(networks))
                 LOG.user("Processing application domains... (%s%%)." % percent)
             l3domain = ext_id_domain_map.get(network['id'])
-            if (not l3domain or
-                    l3domain['applicationDeploymentPolicy'] == 'NONE'):
+            if (not l3domain
+                    or l3domain['applicationDeploymentPolicy'] == 'NONE'):
                 continue
             self.add_descrepancy('DOMAIN', l3domain['ID'])
         LOG.user("Application domains done.")

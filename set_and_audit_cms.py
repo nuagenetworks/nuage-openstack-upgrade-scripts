@@ -2,11 +2,12 @@ import nuage_logging
 nuage_logging.init_logging('set_and_audit_cms')
 
 import argparse
+import logging
+import sys
+
 import generate_audit_file
 import generate_cms_id
-import logging
 import process_audit_file
-import sys
 import vport_sync
 
 

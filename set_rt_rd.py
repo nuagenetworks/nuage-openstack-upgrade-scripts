@@ -21,12 +21,19 @@ try:
     from oslo.config import cfg
 except ImportError:
     from oslo_config import cfg
+import sys
+
 
 from neutron.common import config
 from neutron import context as ncontext
 from neutron.db import db_base_plugin_v2
 from neutron.db import extraroute_db
 from neutron.db import securitygroups_db
+
+try:
+    from neutron.openstack.common import importutils
+except ImportError:
+    from oslo_utils import importutils
 
 try:
     from neutron.plugins.nuage.common import config as nuage_config
@@ -43,8 +50,6 @@ try:
 except ImportError:
     from nuage_neutron.plugins.common import nuagedb
 
-from restproxy import RESTProxyServer
-
 LOG = logging.getLogger('Upgrade_Logger')
 REST_SUCCESS_CODES = range(200, 207)
 
@@ -53,9 +58,12 @@ class PopulateIDs(db_base_plugin_v2.NeutronDbPluginV2,
                   extraroute_db.ExtraRoute_db_mixin,
                   securitygroups_db.SecurityGroupDbMixin):
 
-    def __init__(self, restproxy):
+    def __init__(self, nuageclient):
         self.context = ncontext.get_admin_context()
-        self.rest_call = restproxy.rest_call
+        try:
+            self.rest_call = nuageclient.rest_call
+        except AttributeError:
+            self.rest_call = nuageclient.restproxy.rest_call
 
     def get_error_msg(self, responsedata):
         errors = json.loads(responsedata)
@@ -83,12 +91,11 @@ class PopulateIDs(db_base_plugin_v2.NeutronDbPluginV2,
                         ns_dict['nuage_rtr_rd'] = rd
                         nuagedb.update_entrouter_mapping(ent_rtr_mapping,
                                                          ns_dict)
-                        LOG.debug("RT/RD set successfully in neutron for "
-                                  "router %s" % router['router_id'])
+                        LOG.debug("RT/RD set successfully in neutron for router"
+                                  " %s" % router['router_id'])
             except Exception:
                 LOG.error("Error in setting RT/RD for router %s" % router[
                     'router_id'])
-
 
 def main():
     parser = argparse.ArgumentParser()
@@ -130,25 +137,24 @@ def main():
     auth_resource = cfg.CONF.RESTPROXY.auth_resource
     organization = cfg.CONF.RESTPROXY.organization
 
+    nuageclientinst = importutils.import_module('nuagenetlib.nuageclient')
     try:
-        restproxy = RESTProxyServer(server=server,
-                                    base_uri=base_uri,
-                                    serverssl=serverssl,
-                                    serverauth=serverauth,
-                                    auth_resource=auth_resource,
-                                    organization=organization)
-
+        nuageclient = nuageclientinst.NuageClient(server=server,
+                                                  base_uri=base_uri,
+                                                  serverssl=serverssl,
+                                                  serverauth=serverauth,
+                                                  auth_resource=auth_resource,
+                                                  organization=organization)
     except Exception as e:
         LOG.error("Error in connecting to VSD:%s", str(e))
         return
 
     try:
-        PopulateIDs(restproxy).populate_rt_rd()
+        PopulateIDs(nuageclient).populate_rt_rd()
         LOG.debug("Setting rt/rd is now complete")
     except Exception as e:
         LOG.error("Error in setting rt/rd:%s", str(e))
         return
-
 
 if __name__ == '__main__':
     main()
