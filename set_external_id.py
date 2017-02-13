@@ -28,11 +28,6 @@ from neutron.db import extraroute_db
 from neutron.db import securitygroups_db
 
 try:
-    from neutron.openstack.common import importutils
-except ImportError:
-    from oslo_utils import importutils
-
-try:
     from neutron.plugins.nuage.common import config as nuage_config
 except ImportError:
     from nuage_neutron.plugins.nuage.common import config as nuage_config
@@ -47,6 +42,8 @@ try:
 except ImportError:
     from nuage_neutron.plugins.nuage import nuagedb
 
+from restproxy import RESTProxyServer
+
 LOG = logging.getLogger('Upgrade_Logger')
 REST_SUCCESS_CODES = range(200, 207)
 
@@ -59,9 +56,9 @@ class PopulateIDs(db_base_plugin_v2.NeutronDbPluginV2,
     def __new__(cls, *args, **kwargs):
         return super(PopulateIDs, cls).__new__(cls)
 
-    def __init__(self, nuageclient):
+    def __init__(self, restproxy):
         self.context = ncontext.get_admin_context()
-        self.nuageclient = nuageclient
+        self.restproxy = restproxy
 
     def get_error_msg(self, responsedata):
         errors = json.loads(responsedata)
@@ -74,7 +71,7 @@ class PopulateIDs(db_base_plugin_v2.NeutronDbPluginV2,
                       "id %(id)s failed with error: %(err)s"
                       % {'res': resource,
                          'id': id,
-                         'err': err_msg })
+                         'err': err_msg})
         else:
             LOG.debug("Setting externalID for resource %(res)s"
                       "id %(id)s is successful" % {'res': resource,
@@ -98,7 +95,7 @@ class PopulateIDs(db_base_plugin_v2.NeutronDbPluginV2,
                 data = {
                     'externalID': router['router_id']
                 }
-                response = self.nuageclient.rest_call(
+                response = self.restproxy.rest_call(
                     'PUT',
                     "/domains/" + router['nuage_router_id'] +
                     "?responseChoice=1",
@@ -121,27 +118,27 @@ class PopulateIDs(db_base_plugin_v2.NeutronDbPluginV2,
 
                     if subnet['nuage_l2dom_tmplt_id']:
                         url_str = ("/l2domains/" + subnet['nuage_subnet_id'] +
-                                  "?responseChoice=1")
+                                   "?responseChoice=1")
                     else:
-                        url_str = ("/subnets/" + subnet['nuage_subnet_id']
-                                  + "?responseChoice=1")
+                        url_str = ("/subnets/" + subnet['nuage_subnet_id'] +
+                                   "?responseChoice=1")
 
-                    response = self.nuageclient.rest_call('PUT', url_str, data)
+                    response = self.restproxy.rest_call('PUT', url_str, data)
                     self.validate(response, 'Subnet', subnet['subnet_id'])
                 except Exception as e:
-                    LOG.error("Error %(err)s while setting externalID for subnet "
-                              "%(sub)s" % {'err': str(e),
-                                           'sub': subnet['subnet_id']})
+                    LOG.error("Error %(err)s while setting externalID for "
+                              "subnet %(sub)s" %
+                              {'err': str(e), 'sub': subnet['subnet_id']})
             else:
-                LOG.info("ExternalID will not be set for subnet %s as it is a VSD"
-                         " managed subnet", subnet['subnet_id'])
+                LOG.info("ExternalID will not be set for subnet %s as it is a "
+                         "VSD managed subnet", subnet['subnet_id'])
 
     def handle_ext_networks(self):
         query = self.context.session.query(nuage_models.FloatingIPPoolMapping)
         networks = query.all()
         for network in networks:
             try:
-                response = self.nuageclient.rest_call(
+                response = self.restproxy.rest_call(
                     'GET',
                     "/sharednetworkresources/" + network['fip_pool_id'], '')
 
@@ -157,7 +154,7 @@ class PopulateIDs(db_base_plugin_v2.NeutronDbPluginV2,
                 data = {
                     'externalID': subnet[0]['id']
                 }
-                response = self.nuageclient.rest_call(
+                response = self.restproxy.rest_call(
                     'PUT',
                     "/sharednetworkresources/" + network['fip_pool_id'] +
                     "?responseChoice=1",
@@ -176,10 +173,10 @@ class PopulateIDs(db_base_plugin_v2.NeutronDbPluginV2,
                 data = {
                     'externalID': fip['fip_id']
                 }
-                response = self.nuageclient.rest_call(
+                response = self.restproxy.rest_call(
                     'PUT',
-                    "/floatingips/" + fip['nuage_fip_id'] + "?responseChoice=1",
-                    data)
+                    "/floatingips/" + fip['nuage_fip_id'] +
+                    "?responseChoice=1", data)
                 self.validate(response, 'FloatingIP', fip['fip_id'])
             except Exception as e:
                 LOG.error("Error %(err)s while setting externalID for fip "
@@ -198,7 +195,7 @@ class PopulateIDs(db_base_plugin_v2.NeutronDbPluginV2,
                     'externalID': ent_rtr_mapping['router_id']
                 }
 
-                response = self.nuageclient.rest_call(
+                response = self.restproxy.rest_call(
                     'PUT',
                     "/staticroutes/" + route['nuage_route_id'] +
                     "?responseChoice=1",
@@ -221,7 +218,7 @@ class PopulateIDs(db_base_plugin_v2.NeutronDbPluginV2,
                 data = {
                     'externalID': secgrp['secgroup_id']
                 }
-                response = self.nuageclient.rest_call(
+                response = self.restproxy.rest_call(
                     'PUT',
                     "/policygroups/" + secgrp['nuage_vporttag_id'] +
                     "?responseChoice=1",
@@ -246,14 +243,15 @@ class PopulateIDs(db_base_plugin_v2.NeutronDbPluginV2,
                 }
 
                 if sgrule['direction'] == 'egress':
-                    url_str = "/ingressaclentrytemplates/"+secrule['nuage_acl_id']\
-                              + "?responseChoice=1"
+                    url_str = "/ingressaclentrytemplates/" +\
+                              secrule['nuage_acl_id'] + "?responseChoice=1"
                 else:
-                    url_str = "/egressaclentrytemplates/"+secrule['nuage_acl_id']\
-                              + "?responseChoice=1"
+                    url_str = "/egressaclentrytemplates/" +\
+                              secrule['nuage_acl_id'] + "?responseChoice=1"
 
-                response = self.nuageclient.rest_call('PUT', url_str, data)
-                self.validate(response, 'SecurityGroupRule', secrule['sgrule_id'])
+                response = self.restproxy.rest_call('PUT', url_str, data)
+                self.validate(response, 'SecurityGroupRule',
+                              secrule['sgrule_id'])
             except Exception as e:
                 LOG.error("Error %(err)s while setting externalID for secrule"
                           "%(sec)s" % {'err': str(e),
@@ -269,7 +267,7 @@ class PopulateIDs(db_base_plugin_v2.NeutronDbPluginV2,
                 }
                 if not vport.get('nuage_vif_id'):
                     continue
-                response = self.nuageclient.rest_call(
+                response = self.restproxy.rest_call(
                     'PUT',
                     "/vminterfaces/" + vport['nuage_vif_id'] +
                     "?responseChoice=1",
@@ -294,7 +292,7 @@ class PopulateIDs(db_base_plugin_v2.NeutronDbPluginV2,
 
         # calculate network start
         net_start = [str(int(ipaddr[x]) & int(netmask[x]))
-                     for x in range(0,4)]
+                     for x in range(0, 4)]
 
         return '.'.join(net_start) + '/' + self.get_net_size(netmask)
 
@@ -345,22 +343,25 @@ def main():
     auth_resource = cfg.CONF.RESTPROXY.auth_resource
     organization = cfg.CONF.RESTPROXY.organization
 
-    nuageclientinst = importutils.import_module('nuagenetlib.nuageclient')
     try:
-        nuageclient = nuageclientinst.NuageClient(server, base_uri,
-                                                  serverssl, serverauth,
-                                                  auth_resource,20,
-                                                  organization)
+        restproxy = RESTProxyServer(server=server,
+                                    base_uri=base_uri,
+                                    serverssl=serverssl,
+                                    serverauth=serverauth,
+                                    auth_resource=auth_resource,
+                                    organization=organization)
+
     except Exception as e:
         LOG.error("Error in connecting to VSD:%s", str(e))
         return
 
     try:
-        PopulateIDs(nuageclient).populate_externalid()
+        PopulateIDs(restproxy).populate_externalid()
         LOG.debug("Setting externalids is now complete")
     except Exception as e:
         LOG.error("Error in setting external ids:%s", str(e))
         return
+
 
 if __name__ == '__main__':
     main()

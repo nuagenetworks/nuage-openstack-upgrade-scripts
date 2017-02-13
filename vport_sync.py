@@ -116,8 +116,8 @@ class VportSync(db_base_plugin_v2.NeutronDbPluginV2,
                 else:
                     return False
         else:
-            LOG.user("Error in retrieving Vport from VSD of VportID: "
-                     + vportid + " so, skipping this Vport")
+            LOG.user("Error in retrieving Vport from VSD of VportID: " +
+                     vportid + " so, skipping this Vport")
         return None
 
     def create_port_on_nuage(self, port, subnet_mapping, description=None):
@@ -154,8 +154,8 @@ class VportSync(db_base_plugin_v2.NeutronDbPluginV2,
                           "exists, so skipping Vport creation for this port.")
             else:
                 msg = errors['errors'][0]['descriptions'][0]['description']
-                LOG.user("Error in creating Vport for the portID: "
-                         + port['id'] +
+                LOG.user("Error in creating Vport for the portID: " +
+                         port['id'] +
                          " and the error message is: " + str(msg))
 
     def sync_vports(self):
@@ -239,6 +239,7 @@ def main():
     LOG.user("Starting Vports Sync.")
     VportSync(restproxy).sync_vports()
     LOG.user("Vports Sync on VSD is now complete.")
+
 
 if __name__ == '__main__':
     main()

@@ -23,11 +23,6 @@ try:
 except ImportError:
     from oslo_config import cfg
 
-try:
-    from neutron.openstack.common import importutils
-except ImportError:
-    from oslo_utils import importutils
-
 from neutron.common import config
 from neutron import context as ncontext
 try:
@@ -40,12 +35,14 @@ try:
 except ImportError:
     from nuage_neutron.plugins.common import nuage_models
 
+from restproxy import RESTProxyServer
+
 LOG = logging.getLogger('usergroup_mgmtmode')
 REST_SUCCESS_CODES = range(200, 207)
 VSD_NO_ATTR_CHANGES_TO_MODIFY_ERR_CODE = '2039'
 
 
-def set_usergroup_mgmtmode_to_cms(nuageclient):
+def set_usergroup_mgmtmode_to_cms(restproxy):
     context = ncontext.get_admin_context()
     data = {'managementMode': 'CMS'}
     query = context.session.query(nuage_models.SubnetL2Domain)
@@ -53,7 +50,7 @@ def set_usergroup_mgmtmode_to_cms(nuageclient):
     subnets = query.all()
     for subnet in subnets:
         # Get the corresponding neutron subnet object for tenant info
-        result = nuageclient.restproxy.rest_call(
+        result = restproxy.rest_call(
             'PUT',
             '/users/' + subnet['nuage_user_id'] + '?responseChoice=1',
             data)
@@ -71,7 +68,7 @@ def set_usergroup_mgmtmode_to_cms(nuageclient):
                 LOG.debug('Got %s response (ERROR) for user %s',
                           result[0], subnet['nuage_user_id'])
 
-        result = nuageclient.restproxy.rest_call(
+        result = restproxy.rest_call(
             'PUT',
             '/groups/' + subnet['nuage_group_id'] + '?responseChoice=1',
             data)
@@ -134,21 +131,20 @@ def main():
     auth_resource = cfg.CONF.RESTPROXY.auth_resource
     organization = cfg.CONF.RESTPROXY.organization
 
-    nuageclientinst = importutils.import_module('nuagenetlib.nuageclient')
     try:
-        nuageclient = nuageclientinst.NuageClient(server=server,
-                                                  base_uri=base_uri,
-                                                  serverssl=serverssl,
-                                                  serverauth=serverauth,
-                                                  auth_resource=auth_resource,
-                                                  organization=organization,
-                                                  servertimeout=20)
+        restproxy = RESTProxyServer(server=server,
+                                    base_uri=base_uri,
+                                    serverssl=serverssl,
+                                    serverauth=serverauth,
+                                    auth_resource=auth_resource,
+                                    organization=organization)
     except Exception as e:
         LOG.error("Error in connecting to VSD:%s", str(e))
         return
 
-    set_usergroup_mgmtmode_to_cms(nuageclient)
+    set_usergroup_mgmtmode_to_cms(restproxy)
     LOG.debug("Script to set User and Group's mgmtmode to CMS completed")
+
 
 if __name__ == '__main__':
     main()

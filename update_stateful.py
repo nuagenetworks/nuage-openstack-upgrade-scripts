@@ -21,6 +21,10 @@ import os
 from oslo_config import cfg
 import sys
 
+try:
+    from neutron._i18n import _
+except ImportError:
+    from neutron.i18n import _
 
 from neutron.common import config
 from neutron import context as ncontext
@@ -28,13 +32,9 @@ from neutron.db import db_base_plugin_v2
 from neutron.db import extraroute_db
 from neutron.db import securitygroups_db
 
-try:
-    from neutron.openstack.common import importutils
-except ImportError:
-    from oslo_utils import importutils
-
 from nuage_neutron.plugins.common import config as nuage_config
 
+from restproxy import RESTProxyServer
 
 LOG = logging.getLogger('Upgrade_Logger')
 REST_SUCCESS_CODES = range(200, 207)
@@ -49,9 +49,9 @@ class UpdatePGRules(db_base_plugin_v2.NeutronDbPluginV2,
     def __new__(cls, *args, **kwargs):
         return super(UpdatePGRules, cls).__new__(cls)
 
-    def __init__(self, nuageclient, cms_id):
+    def __init__(self, restproxy, cms_id):
         self.context = ncontext.get_admin_context()
-        self.nuageclient = nuageclient
+        self.restproxy = restproxy
         self.cms_id = cms_id
 
     def get_error_msg(self, responsedata):
@@ -71,10 +71,9 @@ class UpdatePGRules(db_base_plugin_v2.NeutronDbPluginV2,
                                      'neutron_rule_id': neutron_rule_id})
             return True
 
-
     def update_pg_rules(self):
         self.update_proto_any_rules()
-        #removing icmp update, as icmp behavior is same as 3.2 in 4.0
+        # removing icmp update, as icmp behavior is same as 3.2 in 4.0
         self.update_icmp_rules()
 
     def update_proto_any_rules(self):
@@ -91,16 +90,16 @@ class UpdatePGRules(db_base_plugin_v2.NeutronDbPluginV2,
             try:
                 ingress_url_str = ("/ingressaclentrytemplates" +
                                    "?responseChoice=1")
-                egress_url_str = ("/egressaclentrytemplates"+
+                egress_url_str = ("/egressaclentrytemplates" +
                                   "?responseChoice=1")
                 headers = {}
                 extra_headers = "externalID IS '%s@%s'" % (
                     sgrule['id'], self.cms_id)
                 headers['X-Nuage-Filter'] = extra_headers
 
-                in_response = self.nuageclient.restproxy.rest_call(
+                in_response = self.restproxy.rest_call(
                     'GET', ingress_url_str, '', extra_headers=headers)
-                eg_response = self.nuageclient.restproxy.rest_call(
+                eg_response = self.restproxy.rest_call(
                     'GET', egress_url_str, '', extra_headers=headers)
                 delete_rule_list = []
                 if sgrule['direction'] == 'egress':
@@ -115,12 +114,11 @@ class UpdatePGRules(db_base_plugin_v2.NeutronDbPluginV2,
                                 update_rule_list.append(item['ID'])
                             update = True
                             for rule in update_rule_list:
-                                update_in_rule =  (
-                                    "/ingressaclentrytemplates/"+rule+
+                                update_in_rule = (
+                                    "/ingressaclentrytemplates/" + rule +
                                     "?responseChoice=1")
-                                #update the rule to stateful=true and
-                                # protocol
-                                #set to any
+                                # update the rule to stateful=true and
+                                # set protocol to any
                                 if update:
                                     update = False
                                     data = {
@@ -131,30 +129,30 @@ class UpdatePGRules(db_base_plugin_v2.NeutronDbPluginV2,
                                         "destinationPort": None
                                     }
                                     response = (
-                                        self.nuageclient.restproxy.rest_call(
+                                        self.restproxy.rest_call(
                                             'PUT', update_in_rule, data=data))
                                     self.validate(response, 'PUT', rule,
                                                   sgrule['id'])
                                 else:
-                                    #delete the remaining rules with the
+                                    # delete the remaining rules with the
                                     # same neutron ANY rule id as external ID
                                     response = (
-                                        self.nuageclient.restproxy.rest_call(
+                                        self.restproxy.rest_call(
                                             'DELETE', update_in_rule, ''))
                                     self.validate(response, 'DELETE', rule,
                                                   sgrule['id'])
                     if eg_response[3]:
                         # these are the extra ICMP rules created in opposite
-                        #  direction. Delete all these ICMP rules.
+                        # direction. Delete all these ICMP rules.
                         acllist = eg_response[3]
                         for key, group in itertools.groupby(
                                 acllist, lambda item: item["parentID"]):
                             for item in group:
                                 delete_rule_list.append(item['ID'])
                         for rule in delete_rule_list:
-                            delete_eg_rule = ("/egressaclentrytemplates/"+
-                                              rule+"?responseChoice=1")
-                            response = self.nuageclient.restproxy.rest_call(
+                            delete_eg_rule = ("/egressaclentrytemplates/" +
+                                              rule + "?responseChoice=1")
+                            response = self.restproxy.rest_call(
                                 'DELETE', delete_eg_rule, '')
                             self.validate(response, 'DELETE', rule,
                                           sgrule['id'])
@@ -170,8 +168,8 @@ class UpdatePGRules(db_base_plugin_v2.NeutronDbPluginV2,
                                 update_rule_list.append(item['ID'])
                             update = True
                             for rule in update_rule_list:
-                                update_eg_rule =  (
-                                    "/egressaclentrytemplates/"+rule+
+                                update_eg_rule = (
+                                    "/egressaclentrytemplates/" + rule +
                                     "?responseChoice=1")
                                 if update:
                                     update = False
@@ -183,15 +181,15 @@ class UpdatePGRules(db_base_plugin_v2.NeutronDbPluginV2,
                                         "destinationPort": None
                                     }
                                     response = (
-                                        self.nuageclient.restproxy.rest_call(
+                                        self.restproxy.rest_call(
                                             'PUT', update_eg_rule, data=data))
                                     self.validate(response, 'PUT', rule,
                                                   sgrule['id'])
                                 else:
-                                    #delete the remaining rules with the
+                                    # delete the remaining rules with the
                                     # same neutron ANY rule id as external ID
                                     response = (
-                                        self.nuageclient.restproxy.rest_call(
+                                        self.restproxy.rest_call(
                                             'DELETE', update_eg_rule, ''))
                                     self.validate(response, 'DELETE', rule,
                                                   sgrule['id'])
@@ -202,36 +200,34 @@ class UpdatePGRules(db_base_plugin_v2.NeutronDbPluginV2,
                             for item in group:
                                 delete_rule_list.append(item['ID'])
                             for rule in delete_rule_list:
-                                delete_in_rule =(
-                                    "/ingressaclentrytemplates/"+rule+
+                                delete_in_rule = (
+                                    "/ingressaclentrytemplates/" + rule +
                                     "?responseChoice=1")
                                 response = (
-                                    self.nuageclient.restproxy.rest_call(
+                                    self.restproxy.rest_call(
                                         'DELETE', delete_in_rule, ''))
                                 self.validate(response, 'DELETE', rule,
                                               sgrule['id'])
             except Exception as e:
                 LOG.error(str(e))
 
-
     def update_icmp_rules(self):
-        sgrules = sg_rules = self.get_security_group_rules(
-                        self.context,
-                        {'protocol': ['icmp']})
+        sgrules = self.get_security_group_rules(
+            self.context, {'protocol': ['icmp']})
         for sgrule in sgrules:
             try:
                 ingress_url_str = ("/ingressaclentrytemplates" +
                                    "?responseChoice=1")
-                egress_url_str = ("/egressaclentrytemplates"+
+                egress_url_str = ("/egressaclentrytemplates" +
                                   "?responseChoice=1")
                 headers = {}
                 extra_headers = "externalID IS '%s@%s'" % (sgrule['id'],
                                                            self.cms_id)
                 headers['X-Nuage-Filter'] = extra_headers
 
-                in_response = self.nuageclient.restproxy.rest_call(
+                in_response = self.restproxy.rest_call(
                     'GET', ingress_url_str, '', extra_headers=headers)
-                eg_response = self.nuageclient.restproxy.rest_call(
+                eg_response = self.restproxy.rest_call(
                     'GET', egress_url_str, '', extra_headers=headers)
                 update_rule_list = []
                 delete_rule_list = []
@@ -253,8 +249,8 @@ class UpdatePGRules(db_base_plugin_v2.NeutronDbPluginV2,
                     for rule in update_rule_list:
                         # rules with ICMPCode and ICMPType None
                         # do nothing
-                        update_in_rule =  ("/ingressaclentrytemplates/"+rule+
-                                           "?responseChoice=1")
+                        update_in_rule = ("/ingressaclentrytemplates/" + rule +
+                                          "?responseChoice=1")
                         if (not sgrule['port_range_min']):
                             continue
                         elif (sgrule['port_range_min'] in STATEFUL_ICMP_TYPES):
@@ -263,36 +259,36 @@ class UpdatePGRules(db_base_plugin_v2.NeutronDbPluginV2,
                                 "ICMPType": sgrule['port_range_min'],
                                 "ICMPCode": sgrule['port_range_max']
                             }
-                            response = self.nuageclient.restproxy.rest_call(
+                            response = self.restproxy.rest_call(
                                 'PUT', update_in_rule, data=data)
                             self.validate(response, 'PUT', rule, sgrule['id'])
                         elif (sgrule['port_range_min'] not in
-                                  STATEFUL_ICMP_TYPES):
+                              STATEFUL_ICMP_TYPES):
                             data = {
                                 "ICMPType": sgrule['port_range_min'],
                                 "ICMPCode": sgrule['port_range_max']
                             }
-                            response = self.nuageclient.restproxy.rest_call(
+                            response = self.restproxy.rest_call(
                                 'PUT', update_in_rule, data=data)
                             self.validate(response, 'PUT', rule, sgrule['id'])
 
                     for rule in delete_rule_list:
-                        delete_eg_rule = ("/egressaclentrytemplates/"+rule+
+                        delete_eg_rule = ("/egressaclentrytemplates/" + rule +
                                           "?responseChoice=1")
                         if (not sgrule['port_range_min']):
                             continue
                         elif (sgrule['port_range_min'] in STATEFUL_ICMP_TYPES):
-                            response = self.nuageclient.restproxy.rest_call(
+                            response = self.restproxy.rest_call(
                                 'DELETE', delete_eg_rule, '')
                             self.validate(response, 'DELETE', rule,
                                           sgrule['id'])
                         elif (sgrule['port_range_min'] not in
-                                  STATEFUL_ICMP_TYPES):
+                              STATEFUL_ICMP_TYPES):
                             data = {
                                 "ICMPType": sgrule['port_range_min'],
                                 "ICMPCode": sgrule['port_range_max']
                             }
-                            response = self.nuageclient.restproxy.rest_call(
+                            response = self.restproxy.rest_call(
                                 'PUT', delete_eg_rule, data=data)
                             self.validate(response, 'PUT', rule, sgrule['id'])
                 elif sgrule['direction'] == 'ingress':
@@ -309,8 +305,8 @@ class UpdatePGRules(db_base_plugin_v2.NeutronDbPluginV2,
                             for item in group:
                                 delete_rule_list.append(item['ID'])
                     for rule in update_rule_list:
-                        update_eg_rule =  ("/egressaclentrytemplates/"+rule+
-                                           "?responseChoice=1")
+                        update_eg_rule = ("/egressaclentrytemplates/" + rule +
+                                          "?responseChoice=1")
                         if (not sgrule['port_range_min']):
                             continue
                         elif (sgrule['port_range_min'] in STATEFUL_ICMP_TYPES):
@@ -319,36 +315,36 @@ class UpdatePGRules(db_base_plugin_v2.NeutronDbPluginV2,
                                 "ICMPType": sgrule['port_range_min'],
                                 "ICMPCode": sgrule['port_range_max']
                             }
-                            response = self.nuageclient.restproxy.rest_call(
+                            response = self.restproxy.rest_call(
                                 'PUT', update_eg_rule, data=data)
                             self.validate(response, 'PUT', rule, sgrule['id'])
                         elif (sgrule['port_range_min'] not in
-                                  STATEFUL_ICMP_TYPES):
+                              STATEFUL_ICMP_TYPES):
                             data = {
                                 "ICMPType": sgrule['port_range_min'],
                                 "ICMPCode": sgrule['port_range_max']
                             }
-                            response = self.nuageclient.restproxy.rest_call(
+                            response = self.restproxy.rest_call(
                                 'PUT', update_eg_rule, data=data)
                             self.validate(response, 'PUT', rule, sgrule['id'])
 
                     for rule in delete_rule_list:
-                        delete_in_rule = ("/ingressaclentrytemplates/"+rule+
+                        delete_in_rule = ("/ingressaclentrytemplates/" + rule +
                                           "?responseChoice=1")
                         if (not sgrule['port_range_min']):
                             continue
                         elif (sgrule['port_range_min'] in STATEFUL_ICMP_TYPES):
-                            response = self.nuageclient.restproxy.rest_call(
+                            response = self.restproxy.rest_call(
                                 'DELETE', delete_in_rule, '')
                             self.validate(response, 'DELETE', rule,
                                           sgrule['id'])
                         elif (sgrule['port_range_min'] not in
-                                  STATEFUL_ICMP_TYPES):
+                              STATEFUL_ICMP_TYPES):
                             data = {
                                 "ICMPType": sgrule['port_range_min'],
                                 "ICMPCode": sgrule['port_range_max']
                             }
-                            response = self.nuageclient.restproxy.rest_call(
+                            response = self.restproxy.rest_call(
                                 'PUT', delete_in_rule, data=data)
                             self.validate(response, 'PUT', rule, sgrule['id'])
             except Exception as e:
@@ -405,19 +401,24 @@ def main():
     if not cms_id:
         raise cfg.ConfigFileValueError(
             _('Missing cms_id in configuration.'))
-    nuageclientinst = importutils.import_module('nuagenetlib.nuageclient')
-    nuageclient = nuageclientinst.NuageClient(cms_id=cms_id,
-                                              server=server,
-                                              base_uri=base_uri,
-                                              serverssl=serverssl,
-                                              serverauth=serverauth,
-                                              auth_resource=auth_resource,
-                                              organization=organization)
+
     try:
-        UpdatePGRules(nuageclient, cms_id).update_pg_rules()
+        restproxy = RESTProxyServer(server=server,
+                                    base_uri=base_uri,
+                                    serverssl=serverssl,
+                                    serverauth=serverauth,
+                                    auth_resource=auth_resource,
+                                    organization=organization)
+    except Exception as e:
+        LOG.error("Error in connecting to VSD:%s", str(e))
+        return
+
+    try:
+        UpdatePGRules(restproxy, cms_id).update_pg_rules()
     except Exception as e:
         LOG.error("Error in updating pg rules:%s", str(e))
         return
+
 
 if __name__ == '__main__':
     main()
