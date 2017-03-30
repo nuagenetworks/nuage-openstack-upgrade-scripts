@@ -1,27 +1,28 @@
-# Copyright 2015 Alcatel-Lucent USA Inc.
+#  Copyright 2017 NOKIA
 #
-# Licensed under the Apache License, Version 2.0 (the "License"); you may
-# not use this file except in compliance with the License. You may obtain
-# a copy of the License at
+#  Licensed under the Apache License, Version 2.0 (the "License"); you may
+#  not use this file except in compliance with the License. You may obtain
+#  a copy of the License at
 #
-#        http://www.apache.org/licenses/LICENSE-2.0
+#       http://www.apache.org/licenses/LICENSE-2.0
 #
-#    Unless required by applicable law or agreed to in writing, software
-#    distributed under the License is distributed on an "AS IS" BASIS, WITHOUT
-#    WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
-#    License for the specific language governing permissions and limitations
-#    under the License.
+#  Unless required by applicable law or agreed to in writing, software
+#  distributed under the License is distributed on an "AS IS" BASIS, WITHOUT
+#  WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
+#  License for the specific language governing permissions and limitations
+#  under the License.
 
 import __builtin__
 import argparse
 import logging
-import nuage_logging
 import os
 import sys
 
 from configobj import ConfigObj
-from restproxy import RESTProxyServer
 from uuid import getnode
+
+from utils.nuage_logging import init_logging, log_file
+from utils.restproxy import RESTProxyServer
 
 
 def dummy(msg):
@@ -40,8 +41,8 @@ def get_mac():
 
 
 DEFAULT_CMS_NAME = 'OpenStack_' + get_mac()
-if not nuage_logging.log_file:
-    nuage_logging.init_logging('generate_cms_id')
+if not log_file:
+    init_logging('generate_cms_id')
 LOG = logging.getLogger('generate_cms_id')
 
 
@@ -100,7 +101,7 @@ def main():
                                     auth_resource=auth_resource,
                                     organization=organization)
     except Exception as e:
-        LOG.user('Error in connecting to VSD:%s' % str(e))
+        LOG.user('Error in connecting to VSD:%s' % str(e), exc_info=True)
         sys.exit(1)
 
     cms_id = plugin_config.get('restproxy', 'cms_id')
@@ -113,7 +114,7 @@ def main():
             sys.exit(1)
         else:
             LOG.user("Existing cms_id found in configuration and validated on "
-                     "VSD. No new cms_id will be generated. '%s' is reused."
+                     "VSD. No new cms_id will be generated. '%s' is reused"
                      % cms_id)
             return
 
