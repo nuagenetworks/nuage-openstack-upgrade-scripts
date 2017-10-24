@@ -41,12 +41,16 @@ import subprocess
 import sys
 import tempfile
 
+import sqlalchemy as sa
+from sqlalchemy import orm
+
 from neutron.common import config
 from neutron.db.models_v2 import Network
 from neutron.db.models_v2 import Port
 from neutron.db.portbindings_db import PortBindingPort
 from neutron.db.segments_db import NetworkSegment
 from neutron.db import standard_attr
+from neutron_lib.db import model_base
 from neutron.plugins.ml2.models import PortBinding
 from neutron.plugins.ml2.models import PortBindingLevel
 from oslo_config import cfg
@@ -58,14 +62,26 @@ from sqlalchemy.sql.functions import now
 
 from utils import nuage_logging
 
-from utils.restproxy import RESTProxyServer
-from utils.vsdclient_config import nuage_register_cfg_opts
-
-from nuage_neutron.plugins.common.nuage_models import ProviderNetBinding
-
 script_name = 'nuage_core_to_ml2'
 LOG = logging.getLogger(script_name)
 dhcp_device_owner = 'network:dhcp:nuage'
+
+
+class ProviderNetBinding(model_base.BASEV2):
+    """Represents binding of virtual network to physical_network and vlan."""
+    __tablename__ = 'nuage_provider_net_bindings'
+
+    network_id = sa.Column(sa.String(36),
+                           sa.ForeignKey('networks.id', ondelete="CASCADE"),
+                           primary_key=True)
+    network_type = sa.Column(sa.String(32), nullable=False)
+    physical_network = sa.Column(sa.String(64), nullable=False)
+    vlan_id = sa.Column(sa.Integer, nullable=False)
+
+    network = orm.relationship(
+        Network,
+        backref=orm.backref("pnetbinding", lazy='joined',
+                            uselist=False, cascade='delete'))
 
 
 class UpgradeCoreToMl2(object):
@@ -216,8 +232,7 @@ class UpgradeCoreToMl2(object):
 
 
 class UpgradeToMl2(object):
-    def __init__(self, restproxy, neutron_conf):
-        self.restproxy = restproxy
+    def __init__(self, neutron_conf):
         self.neutron_conf = neutron_conf
 
     @nuage_logging.step(description="%s.py for upgrade to 5.0 full ML2 "
@@ -390,23 +405,6 @@ def process_arguments(args):
     config.init(conf_list)
 
 
-def _init_restproxy():
-    nuage_register_cfg_opts()
-    server = cfg.CONF.RESTPROXY.server
-    serverauth = cfg.CONF.RESTPROXY.serverauth
-    serverssl = cfg.CONF.RESTPROXY.serverssl
-    base_uri = cfg.CONF.RESTPROXY.base_uri
-    auth_resource = cfg.CONF.RESTPROXY.auth_resource
-    organization = cfg.CONF.RESTPROXY.organization
-
-    return RESTProxyServer(server=server,
-                           base_uri=base_uri,
-                           serverssl=serverssl,
-                           serverauth=serverauth,
-                           auth_resource=auth_resource,
-                           organization=organization)
-
-
 def main():
     if not nuage_logging.log_file:
         nuage_logging.init_logging(script_name)
@@ -419,14 +417,13 @@ def main():
 
     try:
         process_arguments(args)
-        restproxy = _init_restproxy()
         core_plugin = cfg.CONF.core_plugin
 
         if 'nuage' not in (core_plugin or '').lower():
             LOG.user("ERROR: Current core_plugin is not nuage. Exiting.")
             sys.exit(1)
 
-        UpgradeToMl2(restproxy, args.neutron_conf).upgrade()
+        UpgradeToMl2(args.neutron_conf).upgrade()
         LOG.user("Script executed successfully")
 
     except Exception as e:
