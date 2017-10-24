@@ -77,15 +77,13 @@ class UpgradePartialML2toFullML2(object):
 
     def create_dhcp_ports(self, restproxy):
         created = 0
-        try:
-            plugin = manager.NeutronManager.get_plugin()
-        except AttributeError:
-            plugin = manager.NeutronManager.get_plugin_for_resource('subnet')
+        plugin = manager.NeutronManager.get_plugin()
         context = neutron_context.get_admin_context()
         session = context.session
 
         l2_vsd_mngd_subnets = (
-            session.query(SubnetL2Domain).filter(
+            session.query(SubnetL2Domain)
+                .filter(
                 SubnetL2Domain.nuage_managed_subnet.is_(True),
                 SubnetL2Domain.nuage_l2dom_tmplt_id.isnot(None)
             )
@@ -150,11 +148,9 @@ class UpgradePartialML2toFullML2(object):
             response = restproxy.get(
                 '/sharednetworkresources/%s'
                 % l2domain['associatedSharedNetworkResourceID'])
-            if response[0] not in range(200, 207):
-                LOG.user("WARNING: "
-                         "Can't find shared_subnet %(shared_subnet)s on VSD."
-                         % {'shared_subnet':
-                            l2domain['associatedSharedNetworkResourceID']})
+            if response[0] not in range(200,207):
+                LOG.user("WARNING: Can't find shared_subnet %(shared_subnet)s on VSD."
+                         % {'shared_subnet': l2domain['associatedSharedNetworkResourceID']})
                 return None
             shared_subnet = response[3][0]
         else:
