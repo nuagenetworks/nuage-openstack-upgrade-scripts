@@ -219,6 +219,20 @@ class RESTProxyServer(object):
         else:
             return response
 
+    def put(self, resource, data, extra_headers=None):
+        response = self.rest_call('PUT', resource, data,
+                                  extra_headers=extra_headers)
+        if response[0] in REST_SUCCESS_CODES:
+            return
+        else:
+            errors = json.loads(response[3])
+            if response[0] == 503:
+                msg = 'VSD temporarily unavailable, ' + str(errors['errors'])
+            else:
+                msg = str(
+                    errors['errors'][0]['descriptions'][0]['description'])
+            raise RESTProxyError(msg, error_code=response[0])
+
     def _get_page(self, resource, data, extra_headers, page_size, page):
         extra_headers['X-Nuage-Page'] = page
         extra_headers['X-Nuage-PageSize'] = page_size
