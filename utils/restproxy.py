@@ -26,7 +26,7 @@ import time
 LOG = logging.getLogger(__name__)
 MAX_RETRIES = 5
 MAX_RETRIES_503 = 5
-REST_SUCCESS_CODES = range(200, 207)
+REST_SUCCESS_CODES = range(200, 300)
 
 
 class RESTProxyBaseException(Exception):
@@ -85,7 +85,7 @@ class RESTProxyServer(object):
         self.retry = 0
         self.retry_503 = 0
         self.auth = None
-        self.success_codes = range(200, 207)
+        self.success_codes = REST_SUCCESS_CODES
         self.generate_nuage_auth()
 
     def _rest_call(self, action, resource, data, extra_headers=None):
