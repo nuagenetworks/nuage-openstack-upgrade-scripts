@@ -41,9 +41,9 @@ class SingleLevelFilter(logging.Filter):
         return record.levelno == self.passlevel
 
 
-def init_logging(name):
+def init_logging(name, operation='upgrade'):
     global log_file, console_formatter, file_formatter, LOG
-    log_dir = os.path.expanduser('~') + '/nuageupgrade'
+    log_dir = os.path.expanduser('~') + '/nuage' + operation
     if not os.path.exists(log_dir):
         os.makedirs(log_dir)
     root_logger = logging.getLogger()
@@ -69,8 +69,8 @@ def init_logging(name):
     logging.Logger.user = user
 
     file_formatter = logging.Formatter()
-    log_file = log_dir + '/upgrade_%s_%s.log' % (
-        name, time.strftime("%d-%m-%Y_%H:%M:%S"))
+    log_file = log_dir + '/%s_%s_%s.log' % (
+        operation, name, time.strftime("%d-%m-%Y_%H:%M:%S"))
     hdlr = logging.FileHandler(log_file)
     hdlr.setFormatter(file_formatter)
     hdlr.setLevel(logging.NOTSET)

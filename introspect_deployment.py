@@ -165,7 +165,7 @@ def main():
     args = parser.parse_args()
 
     if not nuage_logging.log_file:
-        nuage_logging.init_logging(script_name)
+        nuage_logging.init_logging(script_name, 'introspect')
 
     conf_list = []
     for conf_file in (args.neutron_conf, args.nuage_conf):
