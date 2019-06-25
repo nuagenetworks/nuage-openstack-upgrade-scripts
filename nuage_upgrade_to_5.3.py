@@ -41,11 +41,12 @@ try:
 except:
     from neutron_lib import context as neutron_context
 
-from neutron.db.portsecurity_db_common import PortSecurityDbCommon as PortSec
+from neutron.db.port_security import models
 from neutron.db.db_base_plugin_common import DbBasePluginCommon
 from nuage_neutron.plugins.common import config as nuage_config
 from nuage_neutron.plugins.common.nuage_models import SubnetL2Domain
 from oslo_config import cfg
+from sqlalchemy.orm import exc
 
 from utils import nuage_logging
 from utils.restproxy import RESTProxyServer
@@ -60,6 +61,19 @@ class UpgradeVSDManagedSubnetPorts(object):
     def __init__(self, restproxy):
         super(UpgradeVSDManagedSubnetPorts, self).__init__()
         self.restproxy = restproxy
+
+    @staticmethod
+    def _get_security_binding(context, res_id):
+        try:
+            query = DbBasePluginCommon()._model_query(
+                context,
+                models.PortSecurityBinding)
+            port_sg = query.filter(models.PortSecurityBinding.port_id
+                                   == res_id).one()
+        except exc.NoResultFound:
+            # assume port was created before port-security extension
+            return True
+        return port_sg.port_security_enabled
 
     @nuage_logging.step(description="updating spoofing attribute of VSD "
                                     "managed subnet ports to reflect port"
@@ -83,19 +97,21 @@ class UpgradeVSDManagedSubnetPorts(object):
             vports = self._get_vports_on_vsd_per_subnet(restproxy, mapping)
             if vports:
                 for vport in nuage_logging.iterate(vports, 'Vports in subnet'):
-                    if (vport['externalID'] and
-                            vport['type'] == 'VM'):
+                    if (vport['externalID'] and cfg.CONF.RESTPROXY.cms_id in
+                            vport['externalID'] and vport['type'] == 'VM'):
                         port_id = vport['externalID'].split('@')[0]
                         port_details = self._validate_port_exists(context,
-                                                                  port_id)
-                        if port_details.get('port_security'):
+                                                                  port_id,
+                                                                  vport['ID'])
+                        if not port_details:
+                            continue
+                        elif port_details.get('port_security'):
                             port_security = (port_details['port_security']
                                              ['port_security_enabled'])
                         else:
-                            port_security = (
-                                PortSec()._get_port_security_binding(context,
-                                                                     port_id)
-                            )
+                            port_security = self._get_security_binding(
+                                context,
+                                port_id)
                         if (not port_security and
                                 vport['addressSpoofing'] != 'ENABLED'):
                                 restproxy.put(
@@ -121,13 +137,15 @@ class UpgradeVSDManagedSubnetPorts(object):
                  {'ports': ports_set, 'subnets': subnet_set})
 
     @staticmethod
-    def _validate_port_exists(context, port_id):
+    def _validate_port_exists(context, port_id, vport_id):
         try:
             port_details = DbBasePluginCommon()._get_port(context, port_id)
             return port_details
-        except n_exc.PortNotFound as e:
-            LOG.user("WARNING:" + e.message +
-                     " This port id has Vport mapped on VSD")
+        except n_exc.PortNotFound:
+            LOG.user("ERROR: Port id %(port_id)s not found, which has Vport"
+                     " id %(vport_id)s mapped on VSD",
+                     {'port_id': port_id, 'vport_id': vport_id})
+            return None
 
     @staticmethod
     def _get_vports_on_vsd_per_subnet(restproxy, subnet_mapping):
