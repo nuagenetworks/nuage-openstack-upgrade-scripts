@@ -35,14 +35,17 @@ Purpose:
     updated.
 
 Requirement:
-    This script require two configuration files.
+    This script requires two configuration files.
     1. nuage_plugin.ini : which has details to connect to VSD
     2. neutron.conf : which has details to connect to neutron database.
+    The optional argument --dry-run is to run upgrade script in dry-run mode
+    and generate a upgrade report named dry_run_report.json.
 Run:
     python nuage_upgrade_to_6_0.py --neutron-conf <neutron.conf>
-      --nuage-conf <nuage_plugin.ini>
+      --nuage-conf <nuage_plugin.ini> [--dry-run]
 ****************************************************************************"""
 import argparse
+import json
 import logging
 import os
 import sys
@@ -78,8 +81,8 @@ try:
 except ImportError:
     from neutron_lib import context as neutron_context
 
+report_name = 'dry_run_report.json'
 script_name = 'nuage_upgrade_to_6_0.py'
-bash_script_name = 'nuage_upgrade_to_6_0.sh'
 LOG = logging.getLogger(script_name)
 
 connect_failure_msg = ('Cannot communicate with Nuage VSD. Please do not '
@@ -93,18 +96,47 @@ msgs_to_retry = [('l2domain is in use and its properties can neither be '
 
 
 class UpgradeTo6dot0(object):
-    def __init__(self, restproxy):
+    def __init__(self, restproxy, is_dry_run):
         self.cms_id = cfg.CONF.RESTPROXY.cms_id
         if not self.cms_id:
             raise cfg.ConfigFileValueError('Missing cms_id in configuration.')
         self.restproxy = restproxy
+        self.is_dry_run = is_dry_run
+        self.output = {}
+
+    def put(self, resource, data):
+        if self.is_dry_run:
+            self.output[str(resource)] = str(data)
+        else:
+            self.restproxy.put(resource, data)
+
+    def bulk_put(self, resource, data):
+        if self.is_dry_run:
+            self.output[str(resource)] = str(data)
+        else:
+            self.restproxy.bulk_put(resource, data)
+
+    def report(self, msg, msg_type):
+        if self.is_dry_run:
+            if self.output.get(msg_type):
+                self.output[msg_type].append(msg)
+            else:
+                self.output[msg_type] = [msg]
+
+    def warn(self, msg):
+        self.report(msg, 'WARN')
+        LOG.user('WARN: ' + msg)  # LOG.warn does not print to console
+
+    def error(self, msg):
+        self.report(msg, 'ERROR')
+        LOG.user('ERROR: ' + msg)  # LOG.error does not print to console
+        raise Exception
 
     @nuage_logging.step(description="updating for supporting pure IPv6")
     def upgrade(self):
         context = neutron_context.get_admin_context()
         session = context.session
         networks = session.query(Network.id).all()
-        ipv6_subnets = []
 
         # update externalID of sriov bridge port to network_id@cms_id
         self.update_sriov_bridge_port(session)
@@ -122,16 +154,17 @@ class UpgradeTo6dot0(object):
                 mapping = session.query(SubnetL2Domain).filter_by(
                     subnet_id=subnet.id).first()
                 if not mapping:
-                    # Pure ipv6 in net
-                    ipv6_subnets.append(subnet)
+                    # Pure ipv6 in network
+                    msg = ("Please delete legacy single-stack ipv6 subnet "
+                           "'{}'".format(subnet['id']))
+                    self.warn(msg)
                 elif not mapping['nuage_managed_subnet']:
                     # os managed subnets
                     if net_obj.ExternalNetwork.objects_exist(
                             context, network_id=network['id']):
                         # shared subnets, update the externalID
-                        self.restproxy.put('/subnets/%s?responseChoice=1' %
-                                           mapping['nuage_subnet_id'],
-                                           ext_data)
+                        self.put('/subnets/%s?responseChoice=1' % mapping[
+                            'nuage_subnet_id'], ext_data)
                     elif subnet['ip_version'] == 4:
                         # ipv4 subnet, ipv4 subnet or ipv6 subnet in dualstack
                         # for ipv6 subnet in dualstack, only update the ipv4
@@ -141,7 +174,7 @@ class UpgradeTo6dot0(object):
                                 subnets[1]['ip_version']):
                             # Dualstack
                             ipv4_subnet, ipv6_subnet = \
-                                self._seperate_ipv4_ipv6_subnet(subnets)
+                                self._separate_ipv4_ipv6_subnet(subnets)
                         if not subnet['enable_dhcp'] and self._is_l2(mapping):
                             # update unmanaged subnet to managed
                             self.update_unmanaged_subnet_to_managed(
@@ -166,15 +199,14 @@ class UpgradeTo6dot0(object):
                 else:
                     # vsd managed subnet
                     if subnet['ip_version'] == 6 and subnet['enable_dhcp']:
-                        LOG.warn("Subnet '{}' is DHCP-enabled on "
-                                 "OpenStack but it is DHCP-disabled on VSD. "
-                                 "Please fix this inconsistent DHCP setting."
-                                 .format(subnet['id']))
+                        msg = ("Subnet '{}' is DHCP-enabled on"
+                               "OpenStack but it is DHCP-disabled on VSD. "
+                               "Please fix this inconsistent DHCP setting."
+                               .format(subnet['id']))
+                        self.warn(msg)
 
-        if ipv6_subnets:
-            for ipv6_subnet in ipv6_subnets:
-                LOG.warn("Please delete legacy single-stack ipv6 subnet "
-                         "'{}'".format(ipv6_subnet['id']))
+        with open(report_name, 'w') as outfile:
+            json.dump(self.output, outfile, indent=4, sort_keys=True)
 
     def update_sriov_bridge_port(self, session):
         switch_port_bindings = session.query(NuageSwitchportBinding).all()
@@ -183,8 +215,8 @@ class UpgradeTo6dot0(object):
                 port_id=switch_port_binding['neutron_port_id']).first()
             data = {'externalID': self._get_external_id(
                 ip_allocation['network_id'])}
-            self.restproxy.put('/vports/%s?responseChoice=1' %
-                               switch_port_binding['nuage_vport_id'], data)
+            self.put('/vports/%s?responseChoice=1' %
+                     switch_port_binding['nuage_vport_id'], data)
 
             hw_pg_name = 'defaultPG-VSG-BRIDGE-'
             hw_ext_data = {'externalID': 'hw:' + data['externalID']}
@@ -199,8 +231,8 @@ class UpgradeTo6dot0(object):
                 switch_port_binding['nuage_vport_id'],
                 extra_headers=headers)[3]
             if hw_default_pgs:
-                self.restproxy.put('/policygroups/%s?responseChoice=1' %
-                                   hw_default_pgs[0]['ID'], hw_ext_data)
+                self.put('/policygroups/%s?responseChoice=1' %
+                         hw_default_pgs[0]['ID'], hw_ext_data)
             else:
                 headers = {
                     'X-NUAGE-FilterType': "predicate",
@@ -211,8 +243,8 @@ class UpgradeTo6dot0(object):
                     switch_port_binding['nuage_vport_id'],
                     extra_headers=headers)[3]
                 if sw_default_pgs:
-                    self.restproxy.put('/policygroups/%s?responseChoice=1' %
-                                       sw_default_pgs[0]['ID'], data)
+                    self.put('/policygroups/%s?responseChoice=1' %
+                             sw_default_pgs[0]['ID'], data)
             # rule externalID change
             headers = {
                 'X-NUAGE-FilterType': "predicate",
@@ -228,9 +260,8 @@ class UpgradeTo6dot0(object):
                                                  ip_allocation['subnet_id'])
                 if check_res:
                     for response in response[3]:
-                        self.restproxy.put(
-                            '/%s/%s?responseChoice=1' %
-                            (resource, response['ID']), data)
+                        self.put('/%s/%s?responseChoice=1' %
+                                 (resource, response['ID']), data)
 
     def update_external_id_for_res_in_l2domain(self, subnet, mapping,
                                                ext_data):
@@ -254,9 +285,9 @@ class UpgradeTo6dot0(object):
                     resource='/%s' % resource, extra_headers=headers)
             check_res = self._check_response(response, resource, subnet['id'])
             if check_res:
-                self.restproxy.put(
-                    '/%s/%s?responseChoice=1' %
-                    (resource, response[3][0]['ID']), ext_data)
+                self.put('/%s/%s?responseChoice=1' % (resource,
+                                                      response[3][0]['ID']),
+                         ext_data)
                 if resource == 'redirectiontargets':
                     resource = 'ingressadvfwdentrytemplates'
                     # Update external id of redirect target rules
@@ -266,9 +297,8 @@ class UpgradeTo6dot0(object):
                     check_res = self._check_response(
                         response, resource, subnet['id'])
                     if check_res:
-                        self.restproxy.put(
-                            '/%s/%s?responseChoice=1' %
-                            (resource, response[3][0]['ID']), ext_data)
+                        self.put('/%s/%s?responseChoice=1' % (
+                            resource, response[3][0]['ID']), ext_data)
 
     def _check_response(self, response, resource, subnet_id):
         if response[0] == 404 or not response[3]:
@@ -307,11 +337,10 @@ class UpgradeTo6dot0(object):
         if is_l2:
             for attempt in range(3):
                 try:
-                    self.restproxy.put(
-                        '/l2domaintemplates/%s?responseChoice=1' %
-                        mapping['nuage_l2dom_tmplt_id'], data)
-                    self.restproxy.put('/l2domains/%s?responseChoice=1' %
-                                       mapping['nuage_subnet_id'], ext_data)
+                    self.put('/l2domaintemplates/%s?responseChoice=1' %
+                             mapping['nuage_l2dom_tmplt_id'], data)
+                    self.put('/l2domains/%s?responseChoice=1' %
+                             mapping['nuage_subnet_id'], ext_data)
                     break
                 except RESTProxyError as e:
                     if e.msg in msgs_to_retry:
@@ -321,8 +350,8 @@ class UpgradeTo6dot0(object):
                     else:
                         raise
         else:
-            self.restproxy.put('/subnets/%s?responseChoice=1' %
-                               mapping['nuage_subnet_id'], data)
+            self.put('/subnets/%s?responseChoice=1' %
+                     mapping['nuage_subnet_id'], data)
 
     def update_unmanaged_subnet_to_managed(self, session, ipv4_subnet,
                                            mapping, ipv6_subnet, ext_data,
@@ -348,11 +377,10 @@ class UpgradeTo6dot0(object):
         # Update the l2domain externalID
         for attempt in range(3):
             try:
-                self.restproxy.put('/l2domaintemplates/%s?responseChoice=1' %
-                                   mapping['nuage_l2dom_tmplt_id'], data)
-                self.restproxy.put('/l2domains/%s?responseChoice=1' %
-                                   mapping['nuage_subnet_id'],
-                                   ext_data)
+                self.put('/l2domaintemplates/%s?responseChoice=1' %
+                         mapping['nuage_l2dom_tmplt_id'], data)
+                self.put('/l2domains/%s?responseChoice=1' %
+                         mapping['nuage_subnet_id'], ext_data)
                 resp = self.restproxy.get(
                     '/l2domains/%s/vminterfaces' % mapping[
                         'nuage_subnet_id'])
@@ -379,15 +407,15 @@ class UpgradeTo6dot0(object):
                             'IPv6Address': ips[6][-1] if ips[6] else None
                         }
                         vminterfaces.append(interface_data)
-                    self.restproxy.bulk_put('/vminterfaces/?responseChoice=1',
-                                            vminterfaces)
+                    self.bulk_put('/vminterfaces/?responseChoice=1',
+                                  vminterfaces)
                 if ipv6_subnet and ipv6_subnet['enable_dhcp']:
                     data = {
                         'enableDHCPv6': ipv6_subnet['enable_dhcp'],
                         'IPv6Gateway': self._create_dhcp_ip_for_ipv6(
                             session, ipv6_subnet)
                     }
-                    self.restproxy.put(
+                    self.put(
                         '/l2domaintemplates/%s?responseChoice=1' %
                         mapping['nuage_l2dom_tmplt_id'], data)
                 break
@@ -407,14 +435,14 @@ class UpgradeTo6dot0(object):
                     continue
                 # IPv4 cidr or IPv6 cidr is invalid
                 if e.msg == msg_to_skipv4:
-                    LOG.warn(msg_to_skipv4 +
-                             ' Please recreate subnet {} with a valid '
-                             'cidr.'.format(ipv4_subnet['id']))
+                    self.warn(msg_to_skipv4 +
+                              ' Please recreate subnet {} with a valid '
+                              'cidr.'.format(ipv4_subnet['id']))
                     break
                 elif msg_to_skipv6 and e.msg == msg_to_skipv6:
-                    LOG.warn(msg_to_skipv6 +
-                             ' Please recreate subnet {} with a valid '
-                             'cidr.'.format(ipv6_subnet['id']))
+                    self.warn(msg_to_skipv6 +
+                              ' Please recreate subnet {} with a valid '
+                              'cidr.'.format(ipv6_subnet['id']))
                     break
                 else:
                     raise
@@ -438,52 +466,66 @@ class UpgradeTo6dot0(object):
                 # Update port with DHCP ipv6
                 ipv4_dhcp_port = self._get_dhcp_port(session, ipv4_subnet)
                 if not ipv4_dhcp_port:
-                    LOG.user(
-                        "Can't find DHCP port for ipv4 subnet {}".format(
-                            ipv4_subnet['id']))
-                    raise Exception
-                # Add entry to ipallocation table
-                with session.begin(subtransactions=True):
-                    session.merge(IPAllocation(
-                        port_id=ipv4_dhcp_port[0]['id'],
-                        ip_address=dhcpv6_ip,
-                        subnet_id=ipv6_subnet['id'],
-                        network_id=ipv6_subnet['network_id']))
+                    msg = "Can't find DHCP port for ipv4 subnet {}".format(
+                        ipv4_subnet['id'])
+                    self.error(msg)
+                if self.is_dry_run:
+                    self.output['IPv6 subnet ' + ipv6_subnet['id']] = (
+                        "Add ipv6 ip {dhcpv6_ip} to DHCP port {dhcp_port_id} "
+                        "to enable DHCP".format(
+                            dhcpv6_ip=dhcpv6_ip,
+                            dhcp_port_id=ipv4_dhcp_port[0]['id']))
+                else:
+                    # Add entry to ipallocation table
+                    with session.begin(subtransactions=True):
+                        session.merge(IPAllocation(
+                            port_id=ipv4_dhcp_port[0]['id'],
+                            ip_address=dhcpv6_ip,
+                            subnet_id=ipv6_subnet['id'],
+                            network_id=ipv6_subnet['network_id']))
             else:
-                port_data = dict(
-                    tenant_id=ipv6_subnet['tenant_id'],
-                    name='',
-                    network_id=ipv6_subnet['network_id'],
-                    admin_state_up=True,
-                    status=lib_constants.PORT_STATUS_ACTIVE,
-                    device_owner=constants.DEVICE_OWNER_DHCP_NUAGE,
-                    device_id='',
-                    ip_allocation=ipalloc_apidef.IP_ALLOCATION_IMMEDIATE)
-                mac_address = net.get_random_mac(cfg.CONF.base_mac.split(':'))
-                dhcp_port = Port(mac_address=mac_address, **port_data)
-                session.add(dhcp_port)
+                if self.is_dry_run:
+                    self.output['IPv6 subnet ' + ipv6_subnet['id']] = (
+                        "Create DHCP port with ip {} to enable DHCP".format(
+                            dhcpv6_ip))
+                else:
+                    port_data = dict(
+                        tenant_id=ipv6_subnet['tenant_id'],
+                        name='',
+                        network_id=ipv6_subnet['network_id'],
+                        admin_state_up=True,
+                        status=lib_constants.PORT_STATUS_ACTIVE,
+                        device_owner=constants.DEVICE_OWNER_DHCP_NUAGE,
+                        device_id='',
+                        ip_allocation=ipalloc_apidef.IP_ALLOCATION_IMMEDIATE)
+                    mac_address = net.get_random_mac(
+                        cfg.CONF.base_mac.split(':'))
+                    dhcp_port = Port(mac_address=mac_address, **port_data)
+                    session.add(dhcp_port)
 
+                    with session.begin(subtransactions=True):
+                        session.merge(IPAllocation(
+                            port_id=dhcp_port['id'],
+                            ip_address=dhcpv6_ip,
+                            subnet_id=ipv6_subnet['id'],
+                            network_id=ipv6_subnet['network_id']))
+                    session.merge(PortBinding(port_id=dhcp_port['id'],
+                                              vif_type='unbound',
+                                              vnic_type='normal'))
+            if not self.is_dry_run:
+                ipam_subnet = session.query(IpamSubnet).filter_by(
+                    neutron_subnet_id=ipv6_subnet['id']).first()
+                # Add entry to ipamallocation table which is needed by port
+                # deletion
                 with session.begin(subtransactions=True):
-                    session.merge(IPAllocation(
-                        port_id=dhcp_port['id'],
+                    session.merge(IpamAllocation(
                         ip_address=dhcpv6_ip,
-                        subnet_id=ipv6_subnet['id'],
-                        network_id=ipv6_subnet['network_id']))
-                session.merge(PortBinding(port_id=dhcp_port['id'],
-                                          vif_type='unbound',
-                                          vnic_type='normal'))
-            ipam_subnet = session.query(IpamSubnet).filter_by(
-                neutron_subnet_id=ipv6_subnet['id']).first()
-            # Add entry to ipamallocation table which is needed by port
-            # deletion
-            with session.begin(subtransactions=True):
-                session.merge(IpamAllocation(
-                    ip_address=dhcpv6_ip,
-                    status='ALLOCATED',
-                    ipam_subnet_id=ipam_subnet['id']))
-            return dhcpv6_ip
+                        status='ALLOCATED',
+                        ipam_subnet_id=ipam_subnet['id']))
+                return dhcpv6_ip
 
-    def _get_dhcp_port(self, session, subnet):
+    @staticmethod
+    def _get_dhcp_port(session, subnet):
         dhcp_port = session.query(Port, IPAllocation).filter(
             IPAllocation.subnet_id == subnet['id'],
             Port.device_owner ==
@@ -505,22 +547,24 @@ class UpgradeTo6dot0(object):
                 break
             ip += 1
         if not dhcpv6_ip:
-            LOG.user("Can't find an available IP to create DHCP port for "
-                     "ipv6 subnet {}".format(ipv6_subnet['id']))
-            raise Exception
+            msg = ("Can't find an available IP to create DHCP port for"
+                   "ipv6 subnet {}".format(ipv6_subnet['id']))
+            self.error(msg)
         return dhcpv6_ip
 
     def _get_external_id(self, neutron_id):
         return neutron_id + '@' + self.cms_id
 
-    def _seperate_ipv4_ipv6_subnet(self, subnets):
+    @staticmethod
+    def _separate_ipv4_ipv6_subnet(subnets):
         if subnets[0]['ip_version'] == lib_constants.IP_VERSION_4:
             ipv4_subnet, ipv6_subnet = subnets[0], subnets[1]
         else:
             ipv4_subnet, ipv6_subnet = subnets[1], subnets[0]
         return ipv4_subnet, ipv6_subnet
 
-    def _is_l2(self, subnet_mapping):
+    @staticmethod
+    def _is_l2(subnet_mapping):
         return bool(subnet_mapping['nuage_l2dom_tmplt_id'])
 
 
@@ -533,6 +577,9 @@ def main():
                         required=True,
                         help="File path to the nuage plugin configuration "
                              "file")
+    parser.add_argument("--dry-run",
+                        action='store_true',
+                        help="Run the upgrade script in dry-run mode")
     args = parser.parse_args()
 
     if not nuage_logging.log_file:
@@ -556,7 +603,7 @@ def main():
     auth_resource = cfg.CONF.RESTPROXY.auth_resource
     organization = cfg.CONF.RESTPROXY.organization
 
-    if 'v6' not in base_uri:
+    if not args.dry_run and 'v6' not in base_uri:
         LOG.user("Can't upgrade because plugin doesn't have v6 API set. "
                  "Please change it ({}) to v6 api (e.g. /nuage/api/v6) "
                  "and run upgrade again.".format(base_uri))
@@ -575,9 +622,16 @@ def main():
         sys.exit(1)
 
     try:
-        LOG.user("Updating resources for 6.0 support")
-        UpgradeTo6dot0(restproxy).upgrade()
-        LOG.user("Script executed successfully")
+        if args.dry_run:
+            LOG.user("Start dry run for 6.0 upgrade\n")
+        else:
+            LOG.user("Updating resources for 6.0 support\n")
+        UpgradeTo6dot0(restproxy, args.dry_run).upgrade()
+        if args.dry_run:
+            LOG.user("Dry run finished successfully. "
+                     "Please check the report {}".format(report_name))
+        else:
+            LOG.user("Script executed successfully")
 
     except Exception as e:
         LOG.user("\n\nThe following error occurred:\n  %(error_msg)s\n"
