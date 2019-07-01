@@ -1,4 +1,4 @@
-# Copyright 2019 Nokia
+# Copyright 2019 NOKIA
 #
 #    Licensed under the Apache License, Version 2.0 (the "License"); you may
 #    not use this file except in compliance with the License. You may obtain
@@ -161,14 +161,14 @@ class UpgradeTo6dot0(object):
                 else:
                     # vsd managed subnet
                     if subnet['ip_version'] == 6 and subnet['enable_dhcp']:
-                        LOG.user("WARNING: subnet '{}' is DHCP-enabled on "
+                        LOG.warn("Subnet '{}' is DHCP-enabled on "
                                  "OpenStack but it is DHCP-disabled on VSD. "
                                  "Please fix this inconsistent DHCP setting."
                                  .format(subnet['id']))
 
         if ipv6_subnets:
             for ipv6_subnet in ipv6_subnets:
-                LOG.user("WARNING: please delete the old pure ipv6 subnet "
+                LOG.warn("Please delete legacy single-stack ipv6 subnet "
                          "'{}'".format(ipv6_subnet['id']))
 
     def update_sriov_bridge_port(self, session):
@@ -410,16 +410,14 @@ class UpgradeTo6dot0(object):
                     continue
                 # IPv4 cidr or IPv6 cidr is invalid
                 if e.msg == msg_to_skipv4:
-                    LOG.user('WARNING: ' + msg_to_skipv4 +
-                             ' Please recreate subnet {} with a valide '
-                             'cidr.'
-                             .format(ipv4_subnet['id']))
+                    LOG.warn(msg_to_skipv4 +
+                             ' Please recreate subnet {} with a valid '
+                             'cidr.'.format(ipv4_subnet['id']))
                     break
                 elif msg_to_skipv6 and e.msg == msg_to_skipv6:
-                    LOG.user('WARNING: ' + msg_to_skipv6 +
-                             ' Please recreate subnet {} with a valide '
-                             'cidr.'
-                             .format(ipv6_subnet['id']))
+                    LOG.warn(msg_to_skipv6 +
+                             ' Please recreate subnet {} with a valid '
+                             'cidr.'.format(ipv6_subnet['id']))
                     break
                 else:
                     raise
@@ -562,9 +560,9 @@ def main():
     organization = cfg.CONF.RESTPROXY.organization
 
     if 'v6' not in base_uri:
-        LOG.user("Can't upgrade because of the wrong API. "
-                 "PLease change {} to /nuage/api/v6 and run upgrade again."
-                 .format(base_uri))
+        LOG.user("Can't upgrade because plugin doesn't have v6 API set. "
+                 "Please change it ({}) to v6 api (e.g. /nuage/api/v6) "
+                 "and run upgrade again.".format(base_uri))
         sys.exit(1)
 
     try:
@@ -580,7 +578,7 @@ def main():
         sys.exit(1)
 
     try:
-        LOG.user("Update resources for 6.0 support")
+        LOG.user("Updating resources for 6.0 support")
         UpgradeTo6dot0(restproxy).upgrade()
         LOG.user("Script executed successfully")
 
