@@ -82,9 +82,14 @@ script_name = 'nuage_upgrade_to_6_0.py'
 bash_script_name = 'nuage_upgrade_to_6_0.sh'
 LOG = logging.getLogger(script_name)
 
-connect_failure_msg = ("Cannot communicate with Nuage VSD. Please do not "
-                       "perform any further operations and contact the"
-                       "administrator.")
+connect_failure_msg = ('Cannot communicate with Nuage VSD. Please do not '
+                       'perform any further operations and contact the '
+                       'administrator.')
+
+msgs_to_retry = [('l2domain is in use and its properties can neither be '
+                  'modified or deleted. Please detach the resources '
+                  '(vms/containers) associated with it and retry.'),
+                 'Network Gateway IPv6 Address null is not a valid IPv6.']
 
 
 class UpgradeTo6dot0(object):
@@ -309,11 +314,7 @@ class UpgradeTo6dot0(object):
                                        mapping['nuage_subnet_id'], ext_data)
                     break
                 except RESTProxyError as e:
-                    msg = ('l2domain is in use and its properties can '
-                           'neither be modified or deleted. Please detach '
-                           'the resources (vms/containers) associated with '
-                           'it and retry.')
-                    if e.msg == msg:
+                    if e.msg in msgs_to_retry:
                         LOG.user("Can't update l2domain because of unstable "
                                  "vsd. Retrying to update l2domain.")
                         continue
@@ -391,10 +392,6 @@ class UpgradeTo6dot0(object):
                         mapping['nuage_l2dom_tmplt_id'], data)
                 break
             except RESTProxyError as e:
-                msg_to_retry = ('l2domain is in use and its properties can '
-                                'neither be modified or deleted. Please '
-                                'detach the resources (vms/containers) '
-                                'associated with it and retry.')
                 msg_to_skipv4 = ('IP Address {} is not valid or cannot be in '
                                  'reserved address space.'
                                  .format(data['address']))
@@ -404,7 +401,7 @@ class UpgradeTo6dot0(object):
                         'IP Address {} is not valid or cannot be in '
                         'reserved address space.'
                         .format(data['IPv6Address']))
-                if e.msg == msg_to_retry:
+                if e.msg in msgs_to_retry:
                     LOG.user("Can't update l2domain because of unstable "
                              "vsd. Retrying to update l2domain.")
                     continue
