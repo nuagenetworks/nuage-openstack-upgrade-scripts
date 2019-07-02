@@ -72,6 +72,7 @@ class RESTProxyBulkError(RESTProxyError):
         error_msg = '\n'.join(errors)
         self.message = "{} errors in BULK REST call to VSD: " \
                        "Unique errors: {}".format(nr_failures, error_msg)
+        self.msg = self.message
 
 
 class RESTProxyServer(object):
@@ -253,7 +254,7 @@ class RESTProxyServer(object):
                 nr_failures = response['responseMetadata']['failure']
                 errors = {result['data']['errors'][0]['descriptions']
                           [0]['description'] for result in
-                          response['response']}
+                          response['response'] if result['data']}
                 raise RESTProxyBulkError(nr_failures, list(errors))
             results.append(response['response'])
         return results

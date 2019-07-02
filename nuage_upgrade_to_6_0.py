@@ -153,7 +153,15 @@ class UpgradeTo6dot0(object):
             # Find all subnets in the network
             subnets = session.query(Subnet).filter_by(
                 network_id=network['id']).all()
-
+            ipv4_subnets, ipv6_subnets = self._separate_ipv4_ipv6_subnets(
+                subnets)
+            # Create dhcp port for ipv4 subnets
+            for ipv4_subnet in ipv4_subnets:
+                if ipv4_subnet['enable_dhcp']:
+                    ipv4_dhcp_port = self._get_dhcp_port(session, ipv4_subnet)
+                    if not ipv4_dhcp_port:
+                        self.create_dhcp_port_for_v4_subnet(session,
+                                                            ipv4_subnet)
             for subnet in subnets:
                 mapping = session.query(SubnetL2Domain).filter_by(
                     subnet_id=subnet.id).first()
@@ -174,11 +182,9 @@ class UpgradeTo6dot0(object):
                         # for ipv6 subnet in dualstack, only update the ipv4
                         # subnet
                         ipv6_subnet = None
-                        if (len(subnets) == 2 and subnets[0]['ip_version'] !=
-                                subnets[1]['ip_version']):
+                        if len(ipv4_subnets) == 1 and len(ipv6_subnets) == 1:
                             # Dualstack
-                            ipv4_subnet, ipv6_subnet = \
-                                self._separate_ipv4_ipv6_subnet(subnets)
+                            ipv6_subnet = ipv6_subnets[0]
                         if not subnet['enable_dhcp'] and self._is_l2(mapping):
                             # update unmanaged subnet to managed
                             self.update_unmanaged_subnet_to_managed(
@@ -203,13 +209,67 @@ class UpgradeTo6dot0(object):
                 else:
                     # vsd managed subnet
                     if subnet['ip_version'] == 6 and subnet['enable_dhcp']:
-                        msg = ("Subnet '{}' is DHCP-enabled on "
-                               "OpenStack but it is DHCP-disabled on VSD. "
-                               "Please fix this inconsistent DHCP setting."
-                               .format(subnet['id']))
-                        self.warn(msg)
+                        if self._is_l2(mapping):
+                            response = self.restproxy.get(
+                                '/l2domains/%s' % mapping['nuage_subnet_id'])
+                        else:
+                            response = self.restproxy.get(
+                                '/subnets/%s' % mapping['nuage_subnet_id'])
+                        dhcpv6_ip = response[3][0]['IPv6Gateway']
+                        if not response[3][0]['enableDHCPv6']:
+                            msg = ("Subnet '{}' is DHCP-enabled on "
+                                   "OpenStack but it is DHCP-disabled on VSD. "
+                                   "Please fix this inconsistent DHCP setting."
+                                   .format(subnet['id']))
+                            self.warn(msg)
+                        else:
+                            if dhcpv6_ip:
+                                ipv4_subnet = self.get_vsd_managed_dual_subnet(
+                                    session, subnets=ipv4_subnets,
+                                    nuage_subnet_id=mapping['nuage_subnet_id'])
+                                self.create_dhcp_port_for_vsd_mgd_v6_subnets(
+                                    session, ipv6_subnet=subnet,
+                                    ipv4_subnet=ipv4_subnet,
+                                    dhcpv6_ip=dhcpv6_ip)
+                            else:
+                                # This shouldn't happen because gateway
+                                # can't be null if the user enable DHCP on vsd
+                                msg = ("For VSD managed dhcp enabled subnet "
+                                       "'{}', IPv6Gateway: Network Gateway "
+                                       "IPv6 Address null is not a valid "
+                                       "IPv6 on VSD.".format(subnet['id']))
+                                self.warn(msg)
 
         return self.output
+
+    def create_dhcp_port_for_vsd_mgd_v6_subnets(self, session, ipv6_subnet,
+                                                ipv4_subnet, dhcpv6_ip):
+        ipv6_dhcp_port = self._get_dhcp_port(session, ipv6_subnet)
+        ipv4_dhcp_port = None
+        if ipv4_subnet:
+            ipv4_dhcp_port = self._get_dhcp_port(session, ipv4_subnet)
+        if ipv6_dhcp_port:
+            if (ipv6_dhcp_port[1]['ip_address'] != dhcpv6_ip or
+                    (ipv4_dhcp_port and ipv4_dhcp_port[0]['id'] !=
+                     ipv6_dhcp_port[0]['id'])):
+                msg = ('Delete wrong dhcp port for IPv6 subnet '
+                       '\'{}\''.format(ipv6_subnet['id']))
+                self.output_store(msg, 'INFO')
+                if not self.is_dry_run:
+                    self._delete_dhcp_port(session, ipv6_dhcp_port[0]['id'])
+            else:
+                # The dhcp port is created already
+                return
+        if not self.is_dry_run:
+            self._create_update_dhcp_port_for_subnet(
+                session,
+                subnet=ipv6_subnet,
+                dual_subnet=ipv4_subnet,
+                dhcp_ip=dhcpv6_ip)
+
+    @staticmethod
+    def _delete_dhcp_port(session, ipv6_dhcp_port_id):
+        session.query(Port).filter_by(id=ipv6_dhcp_port_id).delete()
 
     def update_sriov_bridge_port(self, session):
         switch_port_bindings = session.query(NuageSwitchportBinding).all()
@@ -314,6 +374,22 @@ class UpgradeTo6dot0(object):
         else:
             return True
 
+    def create_dhcp_port_for_v4_subnet(self, session, ipv4_subnet):
+        mapping = session.query(SubnetL2Domain).filter_by(
+            subnet_id=ipv4_subnet.id).first()
+        if mapping['nuage_managed_subnet']:
+            if self._is_l2(mapping):
+                response = self.restproxy.get(
+                    '/l2domains/%s' % mapping['nuage_subnet_id'])
+            else:
+                response = self.restproxy.get(
+                    '/subnets/%s' % mapping['nuage_subnet_id'])
+            dhcpv4_ip = response[3][0]['gateway']
+        else:
+            dhcpv4_ip = None
+        self._create_update_dhcp_port_for_subnet(
+            session, subnet=ipv4_subnet, dhcp_ip=dhcpv4_ip)
+
     def config_new_flags_for_dhcp_enabled_subnet(self, session, ipv4_subnet,
                                                  mapping, ipv6_subnet,
                                                  ext_data, network_name):
@@ -321,14 +397,20 @@ class UpgradeTo6dot0(object):
         data = {
             'enableDHCPv4': ipv4_subnet['enable_dhcp']
         }
+        ipv4_dhcp_port = self._get_dhcp_port(session, ipv4_subnet)
+        if not ipv4_dhcp_port:
+            self._create_update_dhcp_port_for_subnet(
+                session, subnet=ipv4_subnet)
         if ipv6_subnet:
             data.update({
                 'enableDHCPv6': ipv6_subnet['enable_dhcp']
             })
             if is_l2:
                 if ipv6_subnet['enable_dhcp']:
-                    data['IPv6Gateway'] = self._create_dhcp_ip_for_ipv6(
-                        session, ipv6_subnet, ipv4_subnet)
+                    data['IPv6Gateway'] = \
+                        self._create_update_dhcp_port_for_subnet(
+                            session, subnet=ipv6_subnet,
+                            dual_subnet=ipv4_subnet)
                 else:
                     data['IPv6Gateway'] = None
 
@@ -415,8 +497,9 @@ class UpgradeTo6dot0(object):
                 if ipv6_subnet and ipv6_subnet['enable_dhcp']:
                     data = {
                         'enableDHCPv6': ipv6_subnet['enable_dhcp'],
-                        'IPv6Gateway': self._create_dhcp_ip_for_ipv6(
-                            session, ipv6_subnet)
+                        'IPv6Gateway':
+                            self._create_update_dhcp_port_for_subnet(
+                                session, subnet=ipv6_subnet)
                     }
                     self.put(
                         '/l2domaintemplates/%s?responseChoice=1' %
@@ -455,50 +538,45 @@ class UpgradeTo6dot0(object):
         return [str(ip) for ip in sorted([netaddr.IPAddress(ip)
                                           for ip in ips])]
 
-    def _create_dhcp_ip_for_ipv6(self, session, ipv6_subnet,
-                                 ipv4_subnet=None):
+    def _create_update_dhcp_port_for_subnet(self, session, subnet,
+                                            dual_subnet=None, dhcp_ip=None):
         # [Port, IpAllocation]
-        ipv6_dhcp_port = self._get_dhcp_port(session, ipv6_subnet)
-        if ipv6_dhcp_port:
-            return ipv6_dhcp_port[1]['ip_address']
+        dhcp_port = self._get_dhcp_port(session, subnet)
+        if dhcp_port:
+            return dhcp_port[1]['ip_address']
         else:
-            # Get the first available IP from the allocation pool
-            dhcpv6_ip = self._allocate_ip_for_port(session,
-                                                   ipv6_subnet)
-            if ipv4_subnet and ipv4_subnet['enable_dhcp']:
+            if not dhcp_ip:
+                # Get the first available IP from the allocation pool
+                dhcp_ip = self._allocate_ip_for_port(session, subnet)
+            if dual_subnet and dual_subnet['enable_dhcp']:
                 # Update port with DHCP ipv6
-                ipv4_dhcp_port = self._get_dhcp_port(session, ipv4_subnet)
-                if not ipv4_dhcp_port:
-                    msg = "Can't find DHCP port for ipv4 subnet {}".format(
-                        ipv4_subnet['id'])
-                    self.error(msg)
+                ipv4_dhcp_port = self._get_dhcp_port(session, dual_subnet)
                 msg = (
                     'Add ipv6 ip {dhcpv6_ip} to DHCP port {dhcp_port_id} to '
                     'enable DHCP for IPv6 subnet {ipv6_sub_id} '.format(
-                        dhcpv6_ip=dhcpv6_ip,
+                        dhcpv6_ip=dhcp_ip,
                         dhcp_port_id=ipv4_dhcp_port[0]['id'],
-                        ipv6_sub_id=ipv6_subnet['id']))
+                        ipv6_sub_id=subnet['id']))
                 self.output_store(msg, 'INFO')
                 if not self.is_dry_run:
                     # Add entry to ipallocation table
                     with session.begin(subtransactions=True):
                         session.merge(IPAllocation(
                             port_id=ipv4_dhcp_port[0]['id'],
-                            ip_address=dhcpv6_ip,
-                            subnet_id=ipv6_subnet['id'],
-                            network_id=ipv6_subnet['network_id']))
+                            ip_address=dhcp_ip,
+                            subnet_id=subnet['id'],
+                            network_id=subnet['network_id']))
             else:
                 msg = (
-                    'Create DHCP port with ip {dhcpv6_ip} to enable DHCP for '
-                    'IPv6 subnet {ipv6_sub_id}'.format(
-                        dhcpv6_ip=dhcpv6_ip,
-                        ipv6_sub_id=ipv6_subnet['id']))
+                    'Create DHCP port with ip {dhcp_ip} to enable DHCP for '
+                    'subnet {sub_id}'.format(
+                        dhcp_ip=dhcp_ip, sub_id=subnet['id']))
                 self.output_store(msg, 'INFO')
                 if not self.is_dry_run:
                     port_data = dict(
-                        tenant_id=ipv6_subnet['tenant_id'],
+                        tenant_id=subnet['tenant_id'],
                         name='',
-                        network_id=ipv6_subnet['network_id'],
+                        network_id=subnet['network_id'],
                         admin_state_up=True,
                         status=lib_constants.PORT_STATUS_ACTIVE,
                         device_owner=constants.DEVICE_OWNER_DHCP_NUAGE,
@@ -512,23 +590,23 @@ class UpgradeTo6dot0(object):
                     with session.begin(subtransactions=True):
                         session.merge(IPAllocation(
                             port_id=dhcp_port['id'],
-                            ip_address=dhcpv6_ip,
-                            subnet_id=ipv6_subnet['id'],
-                            network_id=ipv6_subnet['network_id']))
+                            ip_address=dhcp_ip,
+                            subnet_id=subnet['id'],
+                            network_id=subnet['network_id']))
                     session.merge(PortBinding(port_id=dhcp_port['id'],
                                               vif_type='unbound',
                                               vnic_type='normal'))
             if not self.is_dry_run:
                 ipam_subnet = session.query(IpamSubnet).filter_by(
-                    neutron_subnet_id=ipv6_subnet['id']).first()
+                    neutron_subnet_id=subnet['id']).first()
                 # Add entry to ipamallocation table which is needed by port
                 # deletion
                 with session.begin(subtransactions=True):
                     session.merge(IpamAllocation(
-                        ip_address=dhcpv6_ip,
+                        ip_address=dhcp_ip,
                         status='ALLOCATED',
                         ipam_subnet_id=ipam_subnet['id']))
-                return dhcpv6_ip
+                return dhcp_ip
 
     @staticmethod
     def _get_dhcp_port(session, subnet):
@@ -540,38 +618,50 @@ class UpgradeTo6dot0(object):
         ).first()
         return dhcp_port
 
-    def _allocate_ip_for_port(self, session, ipv6_subnet):
-        dhcpv6_ip = None
-        first_ip = ipv6_subnet['allocation_pools'][0]['first_ip']
-        last_ip = ipv6_subnet['allocation_pools'][0]['last_ip']
+    def _allocate_ip_for_port(self, session, subnet):
+        dhcp_ip = None
+        first_ip = subnet['allocation_pools'][0]['first_ip']
+        last_ip = subnet['allocation_pools'][0]['last_ip']
         ip = netaddr.IPAddress(first_ip)
         while ip <= netaddr.IPAddress(last_ip):
             port_allocation = session.query(IPAllocation).filter_by(
-                subnet_id=ipv6_subnet['id'], ip_address=str(ip)).first()
+                subnet_id=subnet['id'], ip_address=str(ip)).first()
             if not port_allocation:
-                dhcpv6_ip = str(ip)
+                dhcp_ip = str(ip)
                 break
             ip += 1
-        if not dhcpv6_ip:
+        if not dhcp_ip:
             msg = ("Can't find an available IP to create DHCP port for "
-                   "ipv6 subnet {}".format(ipv6_subnet['id']))
+                   "ipv6 subnet {}".format(subnet['id']))
             self.error(msg)
-        return dhcpv6_ip
+        return dhcp_ip
 
     def _get_external_id(self, neutron_id):
         return neutron_id + '@' + self.cms_id
 
     @staticmethod
-    def _separate_ipv4_ipv6_subnet(subnets):
-        if subnets[0]['ip_version'] == lib_constants.IP_VERSION_4:
-            ipv4_subnet, ipv6_subnet = subnets[0], subnets[1]
-        else:
-            ipv4_subnet, ipv6_subnet = subnets[1], subnets[0]
-        return ipv4_subnet, ipv6_subnet
+    def _separate_ipv4_ipv6_subnets(subnets):
+        ipv4_subnets = []
+        ipv6_subnets = []
+        for subnet in subnets:
+            if subnet['ip_version'] == lib_constants.IP_VERSION_4:
+                ipv4_subnets.append(subnet)
+            else:
+                ipv6_subnets.append(subnet)
+        return ipv4_subnets, ipv6_subnets
 
     @staticmethod
     def _is_l2(subnet_mapping):
         return bool(subnet_mapping['nuage_l2dom_tmplt_id'])
+
+    @staticmethod
+    def get_vsd_managed_dual_subnet(session, subnets, nuage_subnet_id):
+        for subnet in subnets:
+            dual_subnet_mapping = session.query(SubnetL2Domain).filter_by(
+                subnet_id=subnet.id).first()
+            if dual_subnet_mapping['nuage_subnet_id'] == nuage_subnet_id:
+                return subnet
+        return None
 
 
 def main():
@@ -631,7 +721,7 @@ def main():
         if args.dry_run:
             LOG.user('Starting dry-run for 6.0 upgrade\n')
         else:
-            LOG.user('Updating resources for 6.0 support\n')
+            LOG.user('Upgrading resources for 6.0 support\n')
 
         upgrade = UpgradeTo6dot0(restproxy, args.dry_run)
 
