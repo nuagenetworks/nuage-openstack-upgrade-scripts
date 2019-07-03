@@ -132,7 +132,8 @@ class UpgradeTo6dot0(object):
         LOG.user('ERROR: ' + msg)  # LOG.error does not print to console
         raise Exception
 
-    @nuage_logging.step(description="updating for supporting pure IPv6")
+    @nuage_logging.step(description='Updating object model for '
+                                    'OpenStack 6.0 release')
     def upgrade(self):
         context = neutron_context.get_admin_context()
         session = context.session
@@ -547,8 +548,8 @@ class UpgradeTo6dot0(object):
                 break
             ip += 1
         if not dhcpv6_ip:
-            msg = ("Can't find an available IP to create DHCP port for"
-                   "ipv6 subnet {}".format(ipv6_subnet['id']))
+            msg = ("Can't find an available IP to create DHCP port for ipv6 "
+                   "subnet {}".format(ipv6_subnet['id']))
             self.error(msg)
         return dhcpv6_ip
 
