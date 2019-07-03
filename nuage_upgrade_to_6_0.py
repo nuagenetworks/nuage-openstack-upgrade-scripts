@@ -81,21 +81,22 @@ try:
 except ImportError:
     from neutron_lib import context as neutron_context
 
-report_name = 'dry_run_report.json'
-script_name = 'nuage_upgrade_to_6_0.py'
-LOG = logging.getLogger(script_name)
+SCRIPT_NAME = 'nuage_upgrade_to_6_0.py'
+REPORT_NAME = 'upgrade_report.json'
 
-connect_failure_msg = ('Cannot communicate with Nuage VSD. Please do not '
-                       'perform any further operations and contact the '
-                       'administrator.')
+LOG = logging.getLogger(SCRIPT_NAME)
 
-msgs_to_retry = [('l2domain is in use and its properties can neither be '
+CONNECTION_FAILURE = ('Cannot communicate with Nuage VSD. Please do not '
+                      'perform any further operations and contact the '
+                      'administrator.')
+MSGS_TO_RETRY = [('l2domain is in use and its properties can neither be '
                   'modified or deleted. Please detach the resources '
                   '(vms/containers) associated with it and retry.'),
                  'Network Gateway IPv6 Address null is not a valid IPv6.']
 
 
 class UpgradeTo6dot0(object):
+
     def __init__(self, restproxy, is_dry_run):
         self.cms_id = cfg.CONF.RESTPROXY.cms_id
         if not self.cms_id:
@@ -105,34 +106,36 @@ class UpgradeTo6dot0(object):
         self.output = {}
 
     def put(self, resource, data):
-        if self.is_dry_run:
-            self.output[str(resource)] = str(data)
-        else:
+        self.output_store('PUT: ' + str(resource), 'INFO')
+        if not self.is_dry_run:
             self.restproxy.put(resource, data)
 
     def bulk_put(self, resource, data):
-        if self.is_dry_run:
-            self.output[str(resource)] = str(data)
-        else:
+        self.output_store('BULK PUT: ' + str(resource), 'INFO')
+        if not self.is_dry_run:
             self.restproxy.bulk_put(resource, data)
 
-    def report(self, msg, msg_type):
-        if self.is_dry_run:
-            if self.output.get(msg_type):
-                self.output[msg_type].append(msg)
-            else:
-                self.output[msg_type] = [msg]
+    def output_store(self, data, data_type):
+        if self.output.get(data_type):
+            self.output[data_type].append(data)
+        else:
+            self.output[data_type] = [data]
+
+    def has_warnings(self):
+        return self.output.get('WARN') or self.output.get('ERROR')
 
     def warn(self, msg):
-        self.report(msg, 'WARN')
-        LOG.user('WARN: ' + msg)  # LOG.warn does not print to console
+        self.output_store(msg, 'WARN')
+        if not self.is_dry_run:
+            LOG.user('WARN: ' + msg)  # LOG.warn does not print to console
 
     def error(self, msg):
-        self.report(msg, 'ERROR')
-        LOG.user('ERROR: ' + msg)  # LOG.error does not print to console
-        raise Exception
+        self.output_store(msg, 'ERROR')
+        if not self.is_dry_run:
+            LOG.user('ERROR: ' + msg)  # LOG.error does not print to console
+            raise Exception
 
-    @nuage_logging.step(description='Updating object model for '
+    @nuage_logging.step(description='updating object model for '
                                     'OpenStack 6.0 release')
     def upgrade(self):
         context = neutron_context.get_admin_context()
@@ -200,14 +203,13 @@ class UpgradeTo6dot0(object):
                 else:
                     # vsd managed subnet
                     if subnet['ip_version'] == 6 and subnet['enable_dhcp']:
-                        msg = ("Subnet '{}' is DHCP-enabled on"
+                        msg = ("Subnet '{}' is DHCP-enabled on "
                                "OpenStack but it is DHCP-disabled on VSD. "
                                "Please fix this inconsistent DHCP setting."
                                .format(subnet['id']))
                         self.warn(msg)
 
-        with open(report_name, 'w') as outfile:
-            json.dump(self.output, outfile, indent=4, sort_keys=True)
+        return self.output
 
     def update_sriov_bridge_port(self, session):
         switch_port_bindings = session.query(NuageSwitchportBinding).all()
@@ -223,7 +225,7 @@ class UpgradeTo6dot0(object):
             hw_ext_data = {'externalID': 'hw:' + data['externalID']}
             sw_pg_name = 'defaultPG-VRSG-BRIDGE-'
             headers = {
-                'X-NUAGE-FilterType': "predicate",
+                'X-NUAGE-FilterType': 'predicate',
                 'X-Nuage-Filter': "name BEGINSWITH '%s'" % hw_pg_name
             }
             # default PG externalID change
@@ -236,7 +238,7 @@ class UpgradeTo6dot0(object):
                          hw_default_pgs[0]['ID'], hw_ext_data)
             else:
                 headers = {
-                    'X-NUAGE-FilterType': "predicate",
+                    'X-NUAGE-FilterType': 'predicate',
                     'X-Nuage-Filter': "name BEGINSWITH '%s'" % sw_pg_name
                 }
                 sw_default_pgs = self.restproxy.get(
@@ -248,7 +250,7 @@ class UpgradeTo6dot0(object):
                              sw_default_pgs[0]['ID'], data)
             # rule externalID change
             headers = {
-                'X-NUAGE-FilterType': "predicate",
+                'X-NUAGE-FilterType': 'predicate',
                 'X-Nuage-Filter': "externalID IS '%s'" % self._get_external_id(
                     ip_allocation['subnet_id'])
             }
@@ -267,7 +269,7 @@ class UpgradeTo6dot0(object):
     def update_external_id_for_res_in_l2domain(self, subnet, mapping,
                                                ext_data):
         headers = {
-            'X-NUAGE-FilterType': "predicate",
+            'X-NUAGE-FilterType': 'predicate',
             'X-Nuage-Filter': "externalID IS '%s'" %
                               self._get_external_id(subnet['id'])
         }
@@ -303,11 +305,11 @@ class UpgradeTo6dot0(object):
 
     def _check_response(self, response, resource, subnet_id):
         if response[0] == 404 or not response[3]:
-            LOG.debug("There is no {} under subnet:{}.".format(
+            LOG.debug('There is no {} under subnet:{}.'.format(
                 resource, subnet_id))
             return False
         elif response[0] not in self.restproxy.success_codes:
-            LOG.user(connect_failure_msg)
+            LOG.user(CONNECTION_FAILURE)
             raise Exception
         else:
             return True
@@ -344,7 +346,7 @@ class UpgradeTo6dot0(object):
                              mapping['nuage_subnet_id'], ext_data)
                     break
                 except RESTProxyError as e:
-                    if e.msg in msgs_to_retry:
+                    if e.msg in MSGS_TO_RETRY:
                         LOG.user("Can't update l2domain because of unstable "
                                  "vsd. Retrying to update l2domain.")
                         continue
@@ -359,7 +361,7 @@ class UpgradeTo6dot0(object):
                                            network_name):
         ipv4_net = netaddr.IPNetwork(ipv4_subnet['cidr'])
         data = {
-            "DHCPManaged": True,
+            'DHCPManaged': True,
             'enableDHCPv4': False,
             'address': str(ipv4_net.ip),
             'netmask': str(ipv4_net.netmask),
@@ -430,9 +432,9 @@ class UpgradeTo6dot0(object):
                         'IP Address {} is not valid or cannot be in '
                         'reserved address space.'
                         .format(data['IPv6Address']))
-                if e.msg in msgs_to_retry:
-                    LOG.user("Can't update l2domain because of unstable "
-                             "vsd. Retrying to update l2domain.")
+                if e.msg in MSGS_TO_RETRY:
+                    LOG.debug("Can't update l2domain because of unstable "
+                              "vsd. Retrying to update l2domain.")
                     continue
                 # IPv4 cidr or IPv6 cidr is invalid
                 if e.msg == msg_to_skipv4:
@@ -470,13 +472,14 @@ class UpgradeTo6dot0(object):
                     msg = "Can't find DHCP port for ipv4 subnet {}".format(
                         ipv4_subnet['id'])
                     self.error(msg)
-                if self.is_dry_run:
-                    self.output['IPv6 subnet ' + ipv6_subnet['id']] = (
-                        "Add ipv6 ip {dhcpv6_ip} to DHCP port {dhcp_port_id} "
-                        "to enable DHCP".format(
-                            dhcpv6_ip=dhcpv6_ip,
-                            dhcp_port_id=ipv4_dhcp_port[0]['id']))
-                else:
+                msg = (
+                    'Add ipv6 ip {dhcpv6_ip} to DHCP port {dhcp_port_id} to '
+                    'enable DHCP for IPv6 subnet {ipv6_sub_id} '.format(
+                        dhcpv6_ip=dhcpv6_ip,
+                        dhcp_port_id=ipv4_dhcp_port[0]['id'],
+                        ipv6_sub_id=ipv6_subnet['id']))
+                self.output_store(msg, 'INFO')
+                if not self.is_dry_run:
                     # Add entry to ipallocation table
                     with session.begin(subtransactions=True):
                         session.merge(IPAllocation(
@@ -485,11 +488,13 @@ class UpgradeTo6dot0(object):
                             subnet_id=ipv6_subnet['id'],
                             network_id=ipv6_subnet['network_id']))
             else:
-                if self.is_dry_run:
-                    self.output['IPv6 subnet ' + ipv6_subnet['id']] = (
-                        "Create DHCP port with ip {} to enable DHCP".format(
-                            dhcpv6_ip))
-                else:
+                msg = (
+                    'Create DHCP port with ip {dhcpv6_ip} to enable DHCP for '
+                    'IPv6 subnet {ipv6_sub_id}'.format(
+                        dhcpv6_ip=dhcpv6_ip,
+                        ipv6_sub_id=ipv6_subnet['id']))
+                self.output_store(msg, 'INFO')
+                if not self.is_dry_run:
                     port_data = dict(
                         tenant_id=ipv6_subnet['tenant_id'],
                         name='',
@@ -548,8 +553,8 @@ class UpgradeTo6dot0(object):
                 break
             ip += 1
         if not dhcpv6_ip:
-            msg = ("Can't find an available IP to create DHCP port for ipv6 "
-                   "subnet {}".format(ipv6_subnet['id']))
+            msg = ("Can't find an available IP to create DHCP port for "
+                   "ipv6 subnet {}".format(ipv6_subnet['id']))
             self.error(msg)
         return dhcpv6_ip
 
@@ -571,25 +576,25 @@ class UpgradeTo6dot0(object):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--neutron-conf",
+    parser.add_argument('--neutron-conf',
                         required=True,
-                        help="File path to the neutron configuration file")
-    parser.add_argument("--nuage-conf",
+                        help='File path to the neutron configuration file')
+    parser.add_argument('--nuage-conf',
                         required=True,
-                        help="File path to the nuage plugin configuration "
-                             "file")
-    parser.add_argument("--dry-run",
+                        help='File path to the nuage plugin configuration '
+                             'file')
+    parser.add_argument('--dry-run',
                         action='store_true',
-                        help="Run the upgrade script in dry-run mode")
+                        help='Run the upgrade script in dry-run mode')
     args = parser.parse_args()
 
     if not nuage_logging.log_file:
-        nuage_logging.init_logging(script_name)
+        nuage_logging.init_logging(SCRIPT_NAME)
 
     conf_list = []
     for conffile in (args.neutron_conf, args.nuage_conf):
         if not os.path.isfile(conffile):
-            LOG.user('File "%s" cannot be found.' % conffile)
+            LOG.user("File '%s' cannot be found." % conffile)
             sys.exit(1)
         conf_list.append('--config-file')
         conf_list.append(conffile)
@@ -607,7 +612,7 @@ def main():
     if not args.dry_run and 'v6' not in base_uri:
         LOG.user("Can't upgrade because plugin doesn't have v6 API set. "
                  "Please change it ({}) to v6 api (e.g. /nuage/api/v6) "
-                 "and run upgrade again.".format(base_uri))
+                 "and run again.".format(base_uri))
         sys.exit(1)
 
     try:
@@ -619,25 +624,45 @@ def main():
                                     organization=organization)
 
     except Exception as e:
-        LOG.user("Error in connecting to VSD: %s", str(e), exc_info=True)
+        LOG.user('Error in connecting to VSD: %s', str(e), exc_info=True)
         sys.exit(1)
 
     try:
         if args.dry_run:
-            LOG.user("Start dry run for 6.0 upgrade\n")
+            LOG.user('Starting dry-run for 6.0 upgrade\n')
         else:
-            LOG.user("Updating resources for 6.0 support\n")
-        UpgradeTo6dot0(restproxy, args.dry_run).upgrade()
+            LOG.user('Updating resources for 6.0 support\n')
+
+        upgrade = UpgradeTo6dot0(restproxy, args.dry_run)
+
+        with open(REPORT_NAME, 'w') as outfile:
+            output = upgrade.upgrade(outfile)
+            json.dump(output, outfile, indent=4, sort_keys=True)
+
         if args.dry_run:
-            LOG.user("Dry run finished successfully. "
-                     "Please check the report {}".format(report_name))
+            if upgrade.has_warnings():
+                LOG.user('Dry-run finished with warnings raised.\n'
+                         'Please inspect the report {}, as corrective actions '
+                         'may be needed\n'
+                         'before run in non-dry-run.'.format(REPORT_NAME))
+            else:
+                LOG.user('Dry-run finished without any warnings raised.\n'
+                         'System is good to be upgraded.')
         else:
-            LOG.user("Script executed successfully")
+            if upgrade.has_warnings():
+                LOG.user('The upgrade finished with warnings raised.\n'
+                         'Please inspect the report {}, as corrective actions '
+                         'may be needed.\n'
+                         'Possibly upgrade has to be re-run after applying '
+                         'those.'.format(REPORT_NAME))
+            else:
+                LOG.user('The upgrade executed successfully.')
 
     except Exception as e:
-        LOG.user("\n\nThe following error occurred:\n  %(error_msg)s\n"
-                 "For more information, please find the log file at "
-                 "%(log_file)s and contact your vendor.",
+        LOG.user('\n\nThe following error occurred:\n'
+                 '  %(error_msg)s\n'
+                 'For more information, please find the log file at '
+                 '%(log_file)s and contact your vendor.',
                  {'error_msg': e.message,
                   'log_file': nuage_logging.log_file},
                  exc_info=True)
