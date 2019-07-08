@@ -65,16 +65,6 @@ class RESTProxyError(RESTProxyBaseException):
         super(RESTProxyError, self).__init__()
 
 
-class RESTProxyBulkError(RESTProxyError):
-
-    def __init__(self, nr_failures, errors=[]):
-        self.code = 409
-        error_msg = '\n'.join(errors)
-        self.message = "{} errors in BULK REST call to VSD: " \
-                       "Unique errors: {}".format(nr_failures, error_msg)
-        self.msg = self.message
-
-
 class RESTProxyServer(object):
     def __init__(self, server, base_uri, serverssl,
                  serverauth, auth_resource,
@@ -242,22 +232,6 @@ class RESTProxyServer(object):
                 msg = str(
                     errors['errors'][0]['descriptions'][0]['description'])
             raise RESTProxyError(msg, error_code=response[0])
-
-    def bulk_put(self, resource, data, extra_headers=None):
-        # Bulk put is limited to 500 requests
-        results = []
-        for chunk in self._chunkify(data, 500):
-            response = self.put(resource, chunk,
-                                extra_headers=extra_headers)
-
-            if response['responseMetadata']['failure']:
-                nr_failures = response['responseMetadata']['failure']
-                errors = {result['data']['errors'][0]['descriptions']
-                          [0]['description'] for result in
-                          response['response'] if result['data']}
-                raise RESTProxyBulkError(nr_failures, list(errors))
-            results.append(response['response'])
-        return results
 
     def _get_page(self, resource, data, extra_headers, page_size, page):
         extra_headers['X-Nuage-Page'] = page

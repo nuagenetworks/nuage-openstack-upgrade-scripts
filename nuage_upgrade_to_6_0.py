@@ -110,11 +110,6 @@ class UpgradeTo6dot0(object):
         if not self.is_dry_run:
             self.restproxy.put(resource, data)
 
-    def bulk_put(self, resource, data):
-        self.output_store('BULK PUT: ' + str(resource), 'INFO')
-        if not self.is_dry_run:
-            self.restproxy.bulk_put(resource, data)
-
     def output_store(self, data, data_type):
         if self.output.get(data_type):
             self.output[data_type].append(data)
@@ -470,8 +465,6 @@ class UpgradeTo6dot0(object):
                     '/l2domains/%s/vminterfaces' % mapping[
                         'nuage_subnet_id'])
                 if resp[3]:
-                    # Do a bulk call for all vm_interfaces
-                    vminterfaces = []
                     for vminterface in resp[3]:
                         # [Port, IpAllocation]
                         result = session.query(Port, IPAllocation).filter(
@@ -491,9 +484,8 @@ class UpgradeTo6dot0(object):
                             'IPAddress': ips[4][-1] if ips[4] else None,
                             'IPv6Address': ips[6][-1] if ips[6] else None
                         }
-                        vminterfaces.append(interface_data)
-                    self.bulk_put('/vminterfaces/?responseChoice=1',
-                                  vminterfaces)
+                        self.put('/vminterfaces/?responseChoice=1',
+                                 interface_data)
                 if ipv6_subnet and ipv6_subnet['enable_dhcp']:
                     data = {
                         'enableDHCPv6': ipv6_subnet['enable_dhcp'],
