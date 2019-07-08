@@ -726,7 +726,7 @@ def main():
         upgrade = UpgradeTo6dot0(restproxy, args.dry_run)
 
         with open(REPORT_NAME, 'w') as outfile:
-            output = upgrade.upgrade(outfile)
+            output = upgrade.upgrade()
             json.dump(output, outfile, indent=4, sort_keys=True)
 
         if args.dry_run:
