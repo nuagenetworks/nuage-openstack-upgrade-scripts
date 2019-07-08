@@ -551,12 +551,19 @@ class UpgradeTo6dot0(object):
                 self.output_store(msg, 'INFO')
                 if not self.is_dry_run:
                     # Add entry to ipallocation table
-                    with session.begin(subtransactions=True):
-                        session.merge(IPAllocation(
-                            port_id=ipv4_dhcp_port[0]['id'],
-                            ip_address=dhcp_ip,
-                            subnet_id=subnet['id'],
-                            network_id=subnet['network_id']))
+                    try:
+                        with session.begin(subtransactions=True):
+                            session.merge(IPAllocation(
+                                port_id=ipv4_dhcp_port[0]['id'],
+                                ip_address=dhcp_ip,
+                                subnet_id=subnet['id'],
+                                network_id=subnet['network_id']))
+                    except Exception:
+                        msg = ('Adding Nuage DHCP IPV6 address reservation to '
+                               'the database failed. Please rerun the upgrade '
+                               'script.')
+                        self.warn(msg)
+
             else:
                 msg = (
                     'Create DHCP port with ip {dhcp_ip} to enable DHCP for '
@@ -579,11 +586,17 @@ class UpgradeTo6dot0(object):
                     session.add(dhcp_port)
 
                     with session.begin(subtransactions=True):
-                        session.merge(IPAllocation(
-                            port_id=dhcp_port['id'],
-                            ip_address=dhcp_ip,
-                            subnet_id=subnet['id'],
-                            network_id=subnet['network_id']))
+                        try:
+                            session.merge(IPAllocation(
+                                port_id=dhcp_port['id'],
+                                ip_address=dhcp_ip,
+                                subnet_id=subnet['id'],
+                                network_id=subnet['network_id']))
+                        except Exception:
+                            msg = ('Adding Nuage DHCP IPV6 address reservation'
+                                   ' to the database failed. '
+                                   'Please rerun the upgrade script.')
+                            self.warn(msg)
                     session.merge(PortBinding(port_id=dhcp_port['id'],
                                               vif_type='unbound',
                                               vnic_type='normal'))
