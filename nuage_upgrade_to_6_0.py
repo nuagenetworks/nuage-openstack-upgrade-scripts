@@ -47,6 +47,7 @@ Run:
 import argparse
 import json
 import logging
+import time
 import os
 import sys
 
@@ -93,6 +94,7 @@ MSGS_TO_RETRY = [('l2domain is in use and its properties can neither be '
                   'modified or deleted. Please detach the resources '
                   '(vms/containers) associated with it and retry.'),
                  'Network Gateway IPv6 Address null is not a valid IPv6.']
+NR_RETRIES = 20
 
 
 class UpgradeTo6dot0(object):
@@ -415,20 +417,35 @@ class UpgradeTo6dot0(object):
             ext_data['description'] = network_name
         data.update(ext_data)
         if is_l2:
-            for attempt in range(3):
+            update_succeeded = False
+            for attempt in range(NR_RETRIES):
                 try:
                     self.put('/l2domaintemplates/%s?responseChoice=1' %
                              mapping['nuage_l2dom_tmplt_id'], data)
                     self.put('/l2domains/%s?responseChoice=1' %
                              mapping['nuage_subnet_id'], ext_data)
+                    update_succeeded = True
                     break
                 except RESTProxyError as e:
                     if e.msg in MSGS_TO_RETRY:
-                        LOG.user("Can't update l2domain because of unstable "
-                                 "vsd. Retrying to update l2domain.")
+                        LOG.user("Attempt {}/{} to update l2domain "
+                                 "for new DHCP flags failed because VSD is "
+                                 "temporarily unavailable. "
+                                 "Retrying.".format(attempt + 1,
+                                                    NR_RETRIES))
+                        time.sleep(0.5)
                         continue
                     else:
                         raise
+            if not update_succeeded:
+                self.error("Failed in updating l2domain {} or "
+                           "l2domaintemplate {} "
+                           "after {} retries because VSD is temporarily "
+                           " unavailable. Rerunning the upgrade script after "
+                           "VSD has become available again should resolve "
+                           "the issue.".format(mapping['nuage_subnet_id'],
+                                               mapping['nuage_l2dom_tmplt_id'],
+                                               NR_RETRIES))
         else:
             self.put('/subnets/%s?responseChoice=1' %
                      mapping['nuage_subnet_id'], data)
@@ -455,7 +472,8 @@ class UpgradeTo6dot0(object):
             ext_data['description'] = network_name
         data.update(ext_data)
         # Update the l2domain externalID
-        for attempt in range(3):
+        can_continue_upgrade = False
+        for attempt in range(NR_RETRIES):
             try:
                 self.put('/l2domaintemplates/%s?responseChoice=1' %
                          mapping['nuage_l2dom_tmplt_id'], data)
@@ -495,8 +513,17 @@ class UpgradeTo6dot0(object):
                     self.put(
                         '/l2domaintemplates/%s?responseChoice=1' %
                         mapping['nuage_l2dom_tmplt_id'], data)
+                can_continue_upgrade = True
                 break
             except RESTProxyError as e:
+                if e.msg in MSGS_TO_RETRY:
+                    LOG.user("Attempt {}/{} to update l2domain "
+                             "failed because VSD is temporarily "
+                             "unavailable. Retrying.".format(attempt + 1,
+                                                             NR_RETRIES))
+                    time.sleep(0.5)
+                    continue
+                # IPv4 cidr or IPv6 cidr is invalid
                 msg_to_skipv4 = ('IP Address {} is not valid or cannot be in '
                                  'reserved address space.'
                                  .format(data['address']))
@@ -506,23 +533,29 @@ class UpgradeTo6dot0(object):
                         'IP Address {} is not valid or cannot be in '
                         'reserved address space.'
                         .format(data['IPv6Address']))
-                if e.msg in MSGS_TO_RETRY:
-                    LOG.debug("Can't update l2domain because of unstable "
-                              "vsd. Retrying to update l2domain.")
-                    continue
-                # IPv4 cidr or IPv6 cidr is invalid
                 if e.msg == msg_to_skipv4:
                     self.warn(msg_to_skipv4 +
                               ' Please recreate subnet {} with a valid '
                               'cidr.'.format(ipv4_subnet['id']))
+                    can_continue_upgrade = True
                     break
                 elif msg_to_skipv6 and e.msg == msg_to_skipv6:
                     self.warn(msg_to_skipv6 +
                               ' Please recreate subnet {} with a valid '
                               'cidr.'.format(ipv6_subnet['id']))
+                    can_continue_upgrade = True
                     break
                 else:
                     raise
+        if not can_continue_upgrade:
+            self.error("Failed in updating l2domain {} or "
+                       "l2domaintemplate {} "
+                       "after {} retries because VSD is temporarily "
+                       "unavailable. Rerunning the upgrade script after "
+                       "VSD has become available again should resolve the "
+                       "issue.".format(mapping['nuage_subnet_id'],
+                                       mapping['nuage_l2dom_tmplt_id'],
+                                       NR_RETRIES))
 
     @staticmethod
     def sort_ips(ips):
