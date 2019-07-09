@@ -480,12 +480,11 @@ class UpgradeTo6dot0(object):
                         for key in ips:
                             ips[key] = self.sort_ips(ips[key])
                         interface_data = {
-                            'ID': vminterface['ID'],
                             'IPAddress': ips[4][-1] if ips[4] else None,
                             'IPv6Address': ips[6][-1] if ips[6] else None
                         }
-                        self.put('/vminterfaces/?responseChoice=1',
-                                 interface_data)
+                        self.put('/vminterfaces/%s?responseChoice=1'
+                                 % vminterface['ID'], interface_data)
                 if ipv6_subnet and ipv6_subnet['enable_dhcp']:
                     data = {
                         'enableDHCPv6': ipv6_subnet['enable_dhcp'],
