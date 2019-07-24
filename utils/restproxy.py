@@ -27,6 +27,7 @@ LOG = logging.getLogger(__name__)
 MAX_RETRIES = 5
 MAX_RETRIES_503 = 5
 REST_SUCCESS_CODES = range(200, 300)
+REST_NOT_FOUND = 404
 
 
 class RESTProxyBaseException(Exception):
@@ -256,6 +257,38 @@ class RESTProxyServer(object):
                           [0]['description'] for result in
                           response['response'] if result['data']}
                 raise RESTProxyBulkError(nr_failures, list(errors))
+            results.append(response['response'])
+        return results
+
+    def delete(self, resource, data='', extra_headers=None):
+        response = self.rest_call('DELETE', resource, data,
+                                  extra_headers=extra_headers)
+        if response[0] in REST_SUCCESS_CODES:
+            return response[3]
+        elif response[0] == REST_NOT_FOUND:
+            return None
+        else:
+            self.raise_error_response(response)
+
+    def bulk_delete(self, resource, data='', extra_headers=None):
+        results = []
+        for chunk in self._chunkify(data, 170):
+            for data in chunk:
+                resource += ('&id=' + data)
+            response = self.delete(resource,
+                                   extra_headers=extra_headers)
+            nr_failures = response['responseMetadata']['failure']
+            if response['responseMetadata']['failure']:
+                num_not_founds = sum(1 for item in response['response'] if
+                                     item['status'] == REST_NOT_FOUND)
+                if num_not_founds != nr_failures:
+                    errors = {result['data']['errors'][0]['descriptions']
+                              [0]['description'] for result in
+                              response['response'] if
+                              (result['data'] and result != REST_NOT_FOUND and
+                               result != REST_SUCCESS_CODES)}
+                    raise RESTProxyBulkError(nr_failures - num_not_founds,
+                                             list(errors))
             results.append(response['response'])
         return results
 

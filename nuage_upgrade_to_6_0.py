@@ -34,6 +34,10 @@ Purpose:
     and update them on vsd, For l2domains, their templates should also be
     updated.
 
+    6. Refactor PG_FOR_LESS_SECURITY to be domain-independent, and rename it
+    to PG_ALLOW_ALL. Merge all PG_FOR_LESS_SECURITY and sriov defaultPG into
+    one if they are in the same type(HARDWARE/SOFTWARE).
+
 Requirement:
     This script requires two configuration files.
     1. nuage_plugin.ini : which has details to connect to VSD
@@ -64,7 +68,6 @@ from neutron.plugins.ml2.models import PortBinding
 
 from nuage_neutron.plugins.common import config as nuage_config
 from nuage_neutron.plugins.common import constants
-from nuage_neutron.plugins.common.nuage_models import NuageSwitchportBinding
 from nuage_neutron.plugins.common.nuage_models import SubnetL2Domain
 from nuage_neutron.vsdclient.common import constants as vsd_constants
 from oslo_config import cfg
@@ -95,6 +98,11 @@ MSGS_TO_RETRY = [('l2domain is in use and its properties can neither be '
                   '(vms/containers) associated with it and retry.'),
                  'Network Gateway IPv6 Address null is not a valid IPv6.']
 NR_RETRIES = 20
+PGS_NAME_PREFIX = {
+    'PG_FOR_LESS_SECURITY', 'defaultPG-VSG-BRIDGE', 'defaultPG-VRSG-BRIDGE',
+    'defaultPG-VSG-HOST', 'defaultPG-VRSG-HOST'
+}
+NUAGE_PLCY_GRP_ALLOW_ALL = 'PG_ALLOW_ALL'
 
 
 class UpgradeTo6dot0(object):
@@ -104,6 +112,7 @@ class UpgradeTo6dot0(object):
         if not self.cms_id:
             raise cfg.ConfigFileValueError('Missing cms_id in configuration.')
         self.restproxy = restproxy
+        self.headers_for_pg = self.extra_header_for_pg()
         self.is_dry_run = is_dry_run
         self.output = {}
 
@@ -116,6 +125,16 @@ class UpgradeTo6dot0(object):
         self.output_store('BULK PUT: ' + str(resource), 'INFO')
         if not self.is_dry_run:
             self.restproxy.bulk_put(resource, data)
+
+    def delete(self, resource):
+        self.output_store('DELETE: ' + str(resource), 'INFO')
+        if not self.is_dry_run:
+            self.restproxy.delete(resource)
+
+    def bulk_delete(self, resource, data):
+        self.output_store('BULK DELETE: ' + str(resource), 'INFO')
+        if not self.is_dry_run:
+            self.restproxy.bulk_delete(resource, data)
 
     def output_store(self, data, data_type):
         if self.output.get(data_type):
@@ -143,9 +162,6 @@ class UpgradeTo6dot0(object):
         context = neutron_context.get_admin_context()
         session = context.session
         networks = session.query(Network.id).all()
-
-        # update externalID of sriov bridge port to network_id@cms_id
-        self.update_sriov_bridge_port(session)
 
         for network in networks:
             network = session.query(Network).filter(Network.id ==
@@ -208,6 +224,10 @@ class UpgradeTo6dot0(object):
                         if self._is_l2(mapping):
                             self.update_external_id_for_res_in_l2domain(
                                 subnet, mapping, ext_data)
+
+                        # Change PG_FOR_LESS to be domain independent
+                        # Merge PG_FOR_LESS and defaultPG of sriov
+                        self.refactor_allow_any_pgs(mapping)
                 else:
                     # vsd managed subnet
                     if subnet['ip_version'] == 6 and subnet['enable_dhcp']:
@@ -267,60 +287,113 @@ class UpgradeTo6dot0(object):
     def _delete_dhcp_port(session, ipv6_dhcp_port_id):
         session.query(Port).filter_by(id=ipv6_dhcp_port_id).delete()
 
-    def update_sriov_bridge_port(self, session):
-        switch_port_bindings = session.query(NuageSwitchportBinding).all()
-        for switch_port_binding in switch_port_bindings:
-            ip_allocation = session.query(IPAllocation).filter_by(
-                port_id=switch_port_binding['neutron_port_id']).first()
-            data = {'externalID': self._get_external_id(
-                ip_allocation['network_id'])}
-            self.put('/vports/%s?responseChoice=1' %
-                     switch_port_binding['nuage_vport_id'], data)
+    def refactor_allow_any_pgs(self, mapping):
+        if self._is_l2(mapping):
+            resource = 'l2domains'
+            vsd_domain_id = mapping['nuage_subnet_id']
+        else:
+            resource = 'domains'
+            vsd_domain_id = self.get_router_id_by_subnet(
+                mapping['nuage_subnet_id'])
+        pgs_to_update = {
+            'SOFTWARE': [],
+            'HARDWARE': []
+        }
+        response = self.restproxy.get(
+            '/%s/%s/policygroups' % (resource, vsd_domain_id),
+            extra_headers=self.headers_for_pg)
+        if response[3]:
+            for pg in response[3]:
+                pgs_to_update[pg['type']].append(pg)
+        if pgs_to_update['SOFTWARE'] or pgs_to_update['HARDWARE']:
+            for sg_type in pgs_to_update:
+                pgs_with_same_type = pgs_to_update[sg_type]
+                pg_vports = {}
+                pgs_to_delete = []
+                for pg in pgs_with_same_type:
+                    vports = self.restproxy.get(
+                        '/policygroups/%s/vports' % pg['ID'])[3]
+                    if vports:
+                        pg_vports[pg['ID']] = vports
+                    else:
+                        # If no Vports, delete that policy group.
+                        pgs_to_delete.append(pg['ID'])
+                if pg_vports:
+                    updated_pg_id = self.get_update_pg_with_max_vports(
+                        resource=resource, vsd_domain_id=vsd_domain_id,
+                        pg_vports=pg_vports, sg_type=sg_type)
+                    for pg_id in pg_vports:
+                        if pg_id != updated_pg_id:
+                            for vport in pg_vports[pg_id]:
+                                self.put(
+                                    '/vports/%s/policygroups?'
+                                    'responseChoice=1' % vport['ID'],
+                                    [updated_pg_id])
+                            # Delete old pg_for_less after migrating vport to
+                            # updated pg
+                            pgs_to_delete.append(pg_id)
+                if pgs_to_delete:
+                    self.bulk_delete('/policygroups/?responseChoice=1',
+                                     pgs_to_delete)
 
-            hw_pg_name = 'defaultPG-VSG-BRIDGE-'
-            hw_ext_data = {'externalID': 'hw:' + data['externalID']}
-            sw_pg_name = 'defaultPG-VRSG-BRIDGE-'
+    def get_router_id_by_subnet(self, subnet_vsd_id):
+        response = self.restproxy.get('/subnets/%s' % subnet_vsd_id)
+        zone_response = self.restproxy.get('/zones/%s' %
+                                           response[3][0]['parentID'])
+        return zone_response[3][0]['parentID']
+
+    def get_update_pg_with_max_vports(self, resource, vsd_domain_id, pg_vports,
+                                      sg_type):
+        suffix = '' if sg_type == 'SOFTWARE' else '_HW'
+        data = {
+            'name': NUAGE_PLCY_GRP_ALLOW_ALL + suffix,
+            'description': NUAGE_PLCY_GRP_ALLOW_ALL + suffix,
+            'externalID': self._get_pg_external_id(sg_type)
+        }
+        headers = {
+            'X-NUAGE-FilterType': 'predicate',
+            'X-Nuage-Filter': "name IS '%s'" % data['name']
+        }
+        # Default PG externalID change
+        response = self.restproxy.get(
+            '/%s/%s/policygroups' % (resource, vsd_domain_id),
+            extra_headers=headers)
+        if response[0] not in self.restproxy.success_codes:
+            LOG.user(CONNECTION_FAILURE)
+            raise Exception
+        if response[3]:
+            # There is one updated policy group
+            pg_id_with_max_vports = response[3][0]['ID']
+        else:
+            pg_id_with_max_vports = max(pg_vports,
+                                        key=lambda x: len(pg_vports[x]))
+            self.put('/policygroups/%s?responseChoice=1' %
+                     pg_id_with_max_vports, data)
+        rule_resources = ['egressaclentrytemplates',
+                          'ingressaclentrytemplates']
+        for rule_resource in rule_resources:
             headers = {
                 'X-NUAGE-FilterType': 'predicate',
-                'X-Nuage-Filter': "name BEGINSWITH '%s'" % hw_pg_name
-            }
-            # default PG externalID change
-            hw_default_pgs = self.restproxy.get(
-                '/vports/%s/policygroups' %
-                switch_port_binding['nuage_vport_id'],
-                extra_headers=headers)[3]
-            if hw_default_pgs:
-                self.put('/policygroups/%s?responseChoice=1' %
-                         hw_default_pgs[0]['ID'], hw_ext_data)
-            else:
-                headers = {
-                    'X-NUAGE-FilterType': 'predicate',
-                    'X-Nuage-Filter': "name BEGINSWITH '%s'" % sw_pg_name
-                }
-                sw_default_pgs = self.restproxy.get(
-                    '/vports/%s/policygroups' %
-                    switch_port_binding['nuage_vport_id'],
-                    extra_headers=headers)[3]
-                if sw_default_pgs:
-                    self.put('/policygroups/%s?responseChoice=1' %
-                             sw_default_pgs[0]['ID'], data)
-            # rule externalID change
-            headers = {
-                'X-NUAGE-FilterType': 'predicate',
-                'X-Nuage-Filter': "externalID IS '%s'" % self._get_external_id(
-                    ip_allocation['subnet_id'])
-            }
-            resources = ['egressaclentrytemplates', 'ingressaclentrytemplates']
-            for resource in resources:
-                response = self.restproxy.get(
-                    resource='/%s' % resource, extra_headers=headers)
-                check_res = self._check_response(response,
-                                                 resource,
-                                                 ip_allocation['subnet_id'])
-                if check_res:
-                    for response in response[3]:
-                        self.put('/%s/%s?responseChoice=1' %
-                                 (resource, response['ID']), data)
+                'X-Nuage-Filter': "locationID IS '%s'" %
+                                  pg_id_with_max_vports}
+            response = self.restproxy.get(
+                resource='/%s/%s/%s' % (resource, vsd_domain_id,
+                                        rule_resource),
+                extra_headers=headers)
+            if response[0] not in self.restproxy.success_codes:
+                LOG.user(CONNECTION_FAILURE)
+                raise Exception
+            for response in response[3]:
+                data = {'externalID': self._get_pg_external_id(
+                    sg_type='')}
+                if response['externalID'] != data['externalID']:
+                    self.put('/%s/%s?responseChoice=1' %
+                             (rule_resource, response['ID']), data)
+        return pg_id_with_max_vports
+
+    def _get_pg_external_id(self, sg_type):
+        prefix = '' if (sg_type == 'SOFTWARE' or sg_type == '') else 'hw:'
+        return prefix + NUAGE_PLCY_GRP_ALLOW_ALL + '@' + self.cms_id
 
     def update_external_id_for_res_in_l2domain(self, subnet, mapping,
                                                ext_data):
@@ -581,8 +654,8 @@ class UpgradeTo6dot0(object):
                 # Update port with DHCP ipv6
                 ipv4_dhcp_port = self._get_dhcp_port(session, dual_subnet)
                 msg = (
-                    'Add ipv6 ip {dhcpv6_ip} to DHCP port {dhcp_port_id} to '
-                    'enable DHCP for IPv6 subnet {ipv6_sub_id} '.format(
+                    'Adding ipv6 ip {dhcpv6_ip} to DHCP port {dhcp_port_id} '
+                    'to enable DHCP for IPv6 subnet {ipv6_sub_id} '.format(
                         dhcpv6_ip=dhcp_ip,
                         dhcp_port_id=ipv4_dhcp_port[0]['id'],
                         ipv6_sub_id=subnet['id']))
@@ -598,7 +671,7 @@ class UpgradeTo6dot0(object):
 
             else:
                 msg = (
-                    'Create DHCP port with ip {dhcp_ip} to enable DHCP for '
+                    'Creating DHCP port with ip {dhcp_ip} to enable DHCP for '
                     'subnet {sub_id}'.format(
                         dhcp_ip=dhcp_ip, sub_id=subnet['id']))
                 self.output_store(msg, 'INFO')
@@ -698,6 +771,16 @@ class UpgradeTo6dot0(object):
             if dual_subnet_mapping['nuage_subnet_id'] == nuage_subnet_id:
                 return subnet
         return None
+
+    @staticmethod
+    def extra_header_for_pg():
+        filter = ''
+        for value in PGS_NAME_PREFIX:
+            if filter:
+                filter += " or "
+            filter += "(name BEGINSWITH '{}')".format(value)
+        return {'X-NUAGE-FilterType': 'predicate',
+                'X-Nuage-Filter': filter}
 
 
 def main():
