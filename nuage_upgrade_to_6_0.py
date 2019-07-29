@@ -487,6 +487,7 @@ class UpgradeTo6dot0(object):
                         # [Port, IpAllocation]
                         result = session.query(Port, IPAllocation).filter(
                             Port.id == IPAllocation.port_id,
+                            Port.id == vminterface['externalID'].split('@')[0],
                             Port.device_id == vminterface['VMUUID']).first()
                         fixed_ips = result[0]['fixed_ips']
                         ips = {4: [], 6: []}
