@@ -250,24 +250,18 @@ class UpgradeTo6dot0(object):
         ipv4_dhcp_port = None
         if ipv4_subnet:
             ipv4_dhcp_port = self._get_dhcp_port(session, ipv4_subnet)
-        if ipv6_dhcp_port:
-            if (ipv6_dhcp_port[1]['ip_address'] != dhcpv6_ip or
-                    (ipv4_dhcp_port and ipv4_dhcp_port[0]['id'] !=
-                     ipv6_dhcp_port[0]['id'])):
-                msg = ('Delete wrong dhcp port for IPv6 subnet '
-                       '\'{}\''.format(ipv6_subnet['id']))
-                self.output_store(msg, 'INFO')
-                if not self.is_dry_run:
-                    self._delete_dhcp_port(session, ipv6_dhcp_port[0]['id'])
-            else:
-                # The dhcp port is created already
-                return
-        if not self.is_dry_run:
-            self._create_update_dhcp_port_for_subnet(
-                session,
-                subnet=ipv6_subnet,
-                dual_subnet=ipv4_subnet,
-                dhcp_ip=dhcpv6_ip)
+        if ipv6_dhcp_port and (ipv6_dhcp_port[1]['ip_address'] != dhcpv6_ip or
+                               (ipv4_dhcp_port and ipv4_dhcp_port[0]['id'] !=
+                                ipv6_dhcp_port[0]['id'])):
+            if not self.is_dry_run:
+                # Create new correct dhcp port for ipv6 or add correct dhcp ip
+                # to the existing dhcp port for ipv4 and delete incorrect
+                # existing dhcp port for v6
+                self._create_update_dhcp_port_for_subnet(
+                    session,
+                    subnet=ipv6_subnet,
+                    dual_subnet=ipv4_subnet,
+                    dhcp_ip=dhcpv6_ip, delete_existing_dhcp_port=True)
 
     @staticmethod
     def _delete_dhcp_port(session, ipv6_dhcp_port_id):
@@ -573,10 +567,11 @@ class UpgradeTo6dot0(object):
                                           for ip in ips])]
 
     def _create_update_dhcp_port_for_subnet(self, session, subnet,
-                                            dual_subnet=None, dhcp_ip=None):
+                                            dual_subnet=None, dhcp_ip=None,
+                                            delete_existing_dhcp_port=False):
         # [Port, IpAllocation]
         dhcp_port = self._get_dhcp_port(session, subnet)
-        if dhcp_port:
+        if dhcp_port and not delete_existing_dhcp_port:
             return dhcp_port[1]['ip_address']
         else:
             if not dhcp_ip:
@@ -594,18 +589,12 @@ class UpgradeTo6dot0(object):
                 self.output_store(msg, 'INFO')
                 if not self.is_dry_run:
                     # Add entry to ipallocation table
-                    try:
-                        with session.begin(subtransactions=True):
-                            session.merge(IPAllocation(
-                                port_id=ipv4_dhcp_port[0]['id'],
-                                ip_address=dhcp_ip,
-                                subnet_id=subnet['id'],
-                                network_id=subnet['network_id']))
-                    except Exception:
-                        msg = ('Adding Nuage DHCP IPV6 address reservation to '
-                               'the database failed. Please rerun the upgrade '
-                               'script.')
-                        self.warn(msg)
+                    with session.begin(subtransactions=True):
+                        session.merge(IPAllocation(
+                            port_id=ipv4_dhcp_port[0]['id'],
+                            ip_address=dhcp_ip,
+                            subnet_id=subnet['id'],
+                            network_id=subnet['network_id']))
 
             else:
                 msg = (
@@ -629,31 +618,31 @@ class UpgradeTo6dot0(object):
                     session.add(dhcp_port)
 
                     with session.begin(subtransactions=True):
-                        try:
-                            session.merge(IPAllocation(
-                                port_id=dhcp_port['id'],
-                                ip_address=dhcp_ip,
-                                subnet_id=subnet['id'],
-                                network_id=subnet['network_id']))
-                        except Exception:
-                            msg = ('Adding Nuage DHCP IPV6 address reservation'
-                                   ' to the database failed. '
-                                   'Please rerun the upgrade script.')
-                            self.warn(msg)
+                        session.merge(IPAllocation(
+                            port_id=dhcp_port['id'],
+                            ip_address=dhcp_ip,
+                            subnet_id=subnet['id'],
+                            network_id=subnet['network_id']))
                     session.merge(PortBinding(port_id=dhcp_port['id'],
                                               vif_type='unbound',
                                               vnic_type='normal'))
             if not self.is_dry_run:
-                ipam_subnet = session.query(IpamSubnet).filter_by(
-                    neutron_subnet_id=subnet['id']).first()
                 # Add entry to ipamallocation table which is needed by port
                 # deletion
+                ipam_subnet = session.query(IpamSubnet).filter_by(
+                    neutron_subnet_id=subnet['id']).first()
                 with session.begin(subtransactions=True):
                     session.merge(IpamAllocation(
                         ip_address=dhcp_ip,
                         status='ALLOCATED',
                         ipam_subnet_id=ipam_subnet['id']))
-                return dhcp_ip
+                # Delete existing dhcp port if needed
+                if delete_existing_dhcp_port and dhcp_port:
+                    msg = ('Delete wrong dhcp port for subnet '
+                           '\'{}\''.format(subnet['id']))
+                    self.output_store(msg, 'INFO')
+                    self._delete_dhcp_port(session, dhcp_port[0]['id'])
+            return dhcp_ip
 
     @staticmethod
     def _get_dhcp_port(session, subnet):
