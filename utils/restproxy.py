@@ -29,6 +29,10 @@ MAX_RETRIES_503 = 5
 REST_SUCCESS_CODES = range(200, 300)
 REST_NOT_FOUND = 404
 
+PATCH_ADD = 'add'
+PATCH_REMOVE = 'remove'
+PATCH_CHOICES = [PATCH_ADD, PATCH_REMOVE]
+
 
 class RESTProxyBaseException(Exception):
     message = "An unknown exception occurred."
@@ -243,6 +247,28 @@ class RESTProxyServer(object):
                 msg = str(
                     errors['errors'][0]['descriptions'][0]['description'])
             raise RESTProxyError(msg, error_code=response[0])
+
+    def patch(self, resource, data, patch_type):
+        if patch_type not in PATCH_CHOICES:
+            raise Exception('Unsupported patch type {}'.format(patch_type))
+        results = []
+        extra_headers = {
+            'X-Nuage-PatchType': patch_type
+        }
+        for chunk in self._chunkify(data, 250):
+            response = self.rest_call('PATCH', resource, chunk,
+                                      extra_headers=extra_headers)
+            if response[0] not in REST_SUCCESS_CODES:
+                errors = json.loads(response[3])
+                if response[0] == 503:
+                    msg = ('VSD temporarily unavailable, ' +
+                           str(errors['errors']))
+                else:
+                    msg = str(
+                        errors['errors'][0]['descriptions'][0]['description'])
+                raise RESTProxyError(msg, error_code=response[0])
+            results.append(response[3])
+        return results
 
     def bulk_put(self, resource, data, extra_headers=None):
         # Bulk put is limited to 500 requests

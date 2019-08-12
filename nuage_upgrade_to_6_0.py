@@ -73,6 +73,7 @@ from nuage_neutron.vsdclient.common import constants as vsd_constants
 from oslo_config import cfg
 
 from utils import nuage_logging
+from utils.restproxy import PATCH_ADD
 from utils.restproxy import RESTProxyError
 from utils.restproxy import RESTProxyServer
 
@@ -121,15 +122,15 @@ class UpgradeTo6dot0(object):
         if not self.is_dry_run:
             self.restproxy.put(resource, data)
 
+    def patch(self, resource, data, patch_type):
+        self.output_store('PATCH: ' + str(resource), 'INFO')
+        if not self.is_dry_run:
+            self.restproxy.patch(resource, data, patch_type)
+
     def bulk_put(self, resource, data):
         self.output_store('BULK PUT: ' + str(resource), 'INFO')
         if not self.is_dry_run:
             self.restproxy.bulk_put(resource, data)
-
-    def delete(self, resource):
-        self.output_store('DELETE: ' + str(resource), 'INFO')
-        if not self.is_dry_run:
-            self.restproxy.delete(resource)
 
     def bulk_delete(self, resource, data):
         self.output_store('BULK DELETE: ' + str(resource), 'INFO')
@@ -314,7 +315,7 @@ class UpgradeTo6dot0(object):
                     vports = self.restproxy.get(
                         '/policygroups/%s/vports' % pg['ID'])[3]
                     if vports:
-                        pg_vports[pg['ID']] = vports
+                        pg_vports[pg['ID']] = [vport['ID'] for vport in vports]
                     else:
                         # If no Vports, delete that policy group.
                         pgs_to_delete.append(pg['ID'])
@@ -324,11 +325,12 @@ class UpgradeTo6dot0(object):
                         pg_vports=pg_vports, sg_type=sg_type)
                     for pg_id in pg_vports:
                         if pg_id != updated_pg_id:
-                            for vport in pg_vports[pg_id]:
-                                self.put(
-                                    '/vports/%s/policygroups?'
-                                    'responseChoice=1' % vport['ID'],
-                                    [updated_pg_id])
+                            self.patch(
+                                '/policygroups/%s/vports?'
+                                'responseChoice=1' % updated_pg_id,
+                                pg_vports[pg_id], PATCH_ADD)
+                            self.put('/policygroups/%s/vports?'
+                                     'responseChoice=1' % pg_id, [])
                             # Delete old pg_for_less after migrating vport to
                             # updated pg
                             pgs_to_delete.append(pg_id)
