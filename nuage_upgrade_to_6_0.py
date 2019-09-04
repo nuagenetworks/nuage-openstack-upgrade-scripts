@@ -346,7 +346,8 @@ class UpgradeTo6dot0(object):
 
     def get_update_pg_with_max_vports(self, resource, vsd_domain_id, pg_vports,
                                       sg_type):
-        suffix = '' if sg_type == 'SOFTWARE' else '_HW'
+        suffix = ('' if sg_type == vsd_constants.SOFTWARE else
+                  '_' + vsd_constants.HARDWARE)
         data = {
             'name': NUAGE_PLCY_GRP_ALLOW_ALL + suffix,
             'description': NUAGE_PLCY_GRP_ALLOW_ALL + suffix,
