@@ -186,7 +186,7 @@ class UpgradeTo6dot0(object):
                         ipv4_dhcp_port = self._get_dhcp_port(session,
                                                              ipv4_subnet)
                         if not ipv4_dhcp_port:
-                            self.create_dhcp_port_for_vsd_mgd_v4_subnets(
+                            self.create_dhcp_port_for_vsd_mgd_v4_subs(
                                 session, ipv4_subnet, mapping)
             for subnet in subnets:
                 mapping = session.query(SubnetL2Domain).filter_by(
@@ -253,13 +253,29 @@ class UpgradeTo6dot0(object):
                             self.warn(msg)
                         else:
                             if dhcpv6_ip:
-                                ipv4_subnet = self.get_vsd_managed_dual_subnet(
-                                    session, subnets=ipv4_subnets,
-                                    nuage_subnet_id=mapping['nuage_subnet_id'])
-                                self.create_dhcp_port_for_vsd_mgd_v6_subnets(
-                                    session, ipv6_subnet=subnet,
-                                    ipv4_subnet=ipv4_subnet,
-                                    dhcpv6_ip=dhcpv6_ip)
+                                ip_allocation = session.query(
+                                    IPAllocation).filter_by(
+                                    ip_address=dhcpv6_ip,
+                                    subnet_id=subnet['id']).first()
+                                if ip_allocation:
+                                    msg = (
+                                        "For VSD managed dhcp enabled subnet "
+                                        "{}, the IPv6Gateway {} is used by "
+                                        "port {}. Please use an available IP "
+                                        "as IPv6Gateway.".format(
+                                            subnet['id'], dhcpv6_ip,
+                                            ip_allocation['port_id']))
+                                    self.warn(msg)
+                                else:
+                                    ipv4_subnet = (
+                                        self.get_vsd_managed_dual_subnet(
+                                            session, subnets=ipv4_subnets,
+                                            nuage_subnet_id=mapping[
+                                                'nuage_subnet_id']))
+                                    self.create_dhcp_port_for_vsd_mgd_v6_subs(
+                                        session, ipv6_subnet=subnet,
+                                        ipv4_subnet=ipv4_subnet,
+                                        dhcpv6_ip=dhcpv6_ip)
                             else:
                                 # This shouldn't happen because gateway
                                 # can't be null if the user enable DHCP on vsd
@@ -271,8 +287,8 @@ class UpgradeTo6dot0(object):
 
         return self.output
 
-    def create_dhcp_port_for_vsd_mgd_v4_subnets(self, session, ipv4_subnet,
-                                                mapping):
+    def create_dhcp_port_for_vsd_mgd_v4_subs(self, session, ipv4_subnet,
+                                             mapping):
         if self._is_l2(mapping):
             response = self.restproxy.get(
                 '/l2domains/%s' % mapping['nuage_subnet_id'])
@@ -294,8 +310,11 @@ class UpgradeTo6dot0(object):
                 self._create_update_dhcp_port_for_subnet(
                     session, subnet=ipv4_subnet, dhcp_ip=dhcpv4_ip)
 
-    def create_dhcp_port_for_vsd_mgd_v6_subnets(self, session, ipv6_subnet,
-                                                ipv4_subnet, dhcpv6_ip):
+    def create_dhcp_port_for_vsd_mgd_v6_subs(self, session, ipv6_subnet,
+                                             ipv4_subnet, dhcpv6_ip):
+        # Create new correct dhcp port for ipv6 or add correct dhcp ip
+        # to the existing dhcp port for ipv4 and delete incorrect
+        # existing dhcp port for v6
         ipv6_dhcp_port = self._get_dhcp_port(session, ipv6_subnet)
         ipv4_dhcp_port = None
         if ipv4_subnet:
@@ -304,24 +323,20 @@ class UpgradeTo6dot0(object):
                                (ipv4_dhcp_port and ipv4_dhcp_port[0]['id'] !=
                                 ipv6_dhcp_port[0]['id'])):
             if not self.is_dry_run:
-                # Create new correct dhcp port for ipv6 or add correct dhcp ip
-                # to the existing dhcp port for ipv4 and delete incorrect
-                # existing dhcp port for v6
-                ip_allocation = session.query(IPAllocation).filter_by(
-                    ip_address=dhcpv6_ip, subnet_id=ipv6_subnet['id']).first()
-                if ip_allocation:
-                    msg = ("For VSD managed dhcp enabled subnet {}, the "
-                           "IPv6Gateway {} is used by port {}. "
-                           "Please use an available IP as IPv6Gateway.".format(
-                            ipv6_subnet['id'], dhcpv6_ip,
-                            ip_allocation['port_id']))
-                    self.warn(msg)
-                else:
-                    self._create_update_dhcp_port_for_subnet(
-                        session,
-                        subnet=ipv6_subnet,
-                        dual_subnet=ipv4_subnet,
-                        dhcp_ip=dhcpv6_ip, delete_existing_dhcp_port=True)
+                self._create_update_dhcp_port_for_subnet(
+                    session,
+                    subnet=ipv6_subnet,
+                    dual_subnet=ipv4_subnet,
+                    dhcp_ip=dhcpv6_ip,
+                    delete_existing_dhcp_port=True)
+        elif not ipv6_dhcp_port:
+            if not self.is_dry_run:
+                self._create_update_dhcp_port_for_subnet(
+                    session,
+                    subnet=ipv6_subnet,
+                    dual_subnet=ipv4_subnet,
+                    dhcp_ip=dhcpv6_ip,
+                    delete_existing_dhcp_port=False)
 
     @staticmethod
     def _delete_dhcp_port(session, ipv6_dhcp_port_id):
