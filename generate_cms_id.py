@@ -12,7 +12,6 @@
 #  License for the specific language governing permissions and limitations
 #  under the License.
 
-import __builtin__
 import argparse
 import logging
 import os
@@ -23,13 +22,6 @@ from uuid import getnode
 
 from utils.nuage_logging import init_logging, log_file
 from utils.restproxy import RESTProxyServer
-
-
-def dummy(msg):
-    return msg
-
-
-__builtin__.__dict__['_'] = dummy
 
 
 REST_SUCCESS_CODES = range(200, 207)
@@ -51,11 +43,11 @@ class NuagePluginConfig(object):
         self.config = ConfigObj(cfg_file_location, encoding='UTF8')
         self.config.filename = cfg_file_location
 
-    def get(self, section, key):
+    def get(self, section, key, default=None):
         try:
-            return self.config[section].get(key)
+            return self.config[section].get(key, default)
         except KeyError:
-            return self.config[section.upper()].get(key)
+            return self.config[section.upper()].get(key, default)
 
     def set(self, section, key, value):
         try:
@@ -92,6 +84,8 @@ def main():
     serverauth = plugin_config.get('restproxy', 'serverauth')
     auth_resource = plugin_config.get('restproxy', 'auth_resource')
     organization = plugin_config.get('restproxy', 'organization')
+    verify_cert = plugin_config.get('restproxy', 'verify_cert',
+                                    default='False')
 
     try:
         restproxy = RESTProxyServer(server=server,
@@ -99,7 +93,9 @@ def main():
                                     serverssl=serverssl,
                                     serverauth=serverauth,
                                     auth_resource=auth_resource,
-                                    organization=organization)
+                                    organization=organization,
+                                    verify_cert=verify_cert)
+        restproxy.generate_nuage_auth()
     except Exception as e:
         LOG.user('Error in connecting to VSD:%s' % str(e), exc_info=True)
         sys.exit(1)

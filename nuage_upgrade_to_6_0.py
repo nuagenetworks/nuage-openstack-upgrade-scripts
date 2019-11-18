@@ -244,8 +244,8 @@ class UpgradeTo6dot0(object):
                         else:
                             response = self.restproxy.get(
                                 '/subnets/%s' % mapping['nuage_subnet_id'])
-                        dhcpv6_ip = response[3][0]['IPv6Gateway']
-                        if not response[3][0]['enableDHCPv6']:
+                        dhcpv6_ip = response[0]['IPv6Gateway']
+                        if not response[0]['enableDHCPv6']:
                             msg = ("Subnet '{}' is DHCP-enabled on "
                                    "OpenStack but it is DHCP-disabled on VSD. "
                                    "Please fix this inconsistent DHCP setting."
@@ -295,7 +295,7 @@ class UpgradeTo6dot0(object):
         else:
             response = self.restproxy.get(
                 '/subnets/%s' % mapping['nuage_subnet_id'])
-        dhcpv4_ip = response[3][0]['gateway']
+        dhcpv4_ip = response[0]['gateway']
         if dhcpv4_ip:
             ip_allocation = session.query(IPAllocation).filter_by(
                 ip_address=dhcpv4_ip, subnet_id=ipv4_subnet['id']).first()
@@ -357,8 +357,8 @@ class UpgradeTo6dot0(object):
         response = self.restproxy.get(
             '/%s/%s/policygroups' % (resource, vsd_domain_id),
             extra_headers=self.headers_for_pg)
-        if response[3]:
-            for pg in response[3]:
+        if response:
+            for pg in response:
                 pgs_to_update[pg['type']].append(pg)
         if pgs_to_update['SOFTWARE'] or pgs_to_update['HARDWARE']:
             for sg_type in pgs_to_update:
@@ -367,7 +367,7 @@ class UpgradeTo6dot0(object):
                 pgs_to_delete = []
                 for pg in pgs_with_same_type:
                     vports = self.restproxy.get(
-                        '/policygroups/%s/vports' % pg['ID'])[3]
+                        '/policygroups/%s/vports' % pg['ID'])
                     if vports:
                         pg_vports[pg['ID']] = [vport['ID'] for vport in vports]
                     else:
@@ -395,8 +395,8 @@ class UpgradeTo6dot0(object):
     def get_router_id_by_subnet(self, subnet_vsd_id):
         response = self.restproxy.get('/subnets/%s' % subnet_vsd_id)
         zone_response = self.restproxy.get('/zones/%s' %
-                                           response[3][0]['parentID'])
-        return zone_response[3][0]['parentID']
+                                           response[0]['parentID'])
+        return zone_response[0]['parentID']
 
     def get_update_pg_with_max_vports(self, resource, vsd_domain_id, pg_vports,
                                       sg_type):
@@ -415,12 +415,9 @@ class UpgradeTo6dot0(object):
         response = self.restproxy.get(
             '/%s/%s/policygroups' % (resource, vsd_domain_id),
             extra_headers=headers)
-        if response[0] not in self.restproxy.success_codes:
-            LOG.user(CONNECTION_FAILURE)
-            raise Exception
-        if response[3]:
+        if response:
             # There is one updated policy group
-            pg_id_with_max_vports = response[3][0]['ID']
+            pg_id_with_max_vports = response[0]['ID']
         else:
             pg_id_with_max_vports = max(pg_vports,
                                         key=lambda x: len(pg_vports[x]))
@@ -437,15 +434,12 @@ class UpgradeTo6dot0(object):
                 resource='/%s/%s/%s' % (resource, vsd_domain_id,
                                         rule_resource),
                 extra_headers=headers)
-            if response[0] not in self.restproxy.success_codes:
-                LOG.user(CONNECTION_FAILURE)
-                raise Exception
-            for response in response[3]:
+            for result in response:
                 data = {'externalID': self._get_pg_external_id(
                     sg_type='')}
-                if response['externalID'] != data['externalID']:
+                if result['externalID'] != data['externalID']:
                     self.put('/%s/%s?responseChoice=1' %
-                             (rule_resource, response['ID']), data)
+                             (rule_resource, result['ID']), data)
         return pg_id_with_max_vports
 
     def _get_pg_external_id(self, sg_type):
@@ -475,7 +469,7 @@ class UpgradeTo6dot0(object):
             check_res = self._check_response(response, resource, subnet['id'])
             if check_res:
                 self.put('/%s/%s?responseChoice=1' % (resource,
-                                                      response[3][0]['ID']),
+                                                      response[0]['ID']),
                          ext_data)
                 if resource == 'redirectiontargets':
                     resource = 'ingressadvfwdentrytemplates'
@@ -487,16 +481,14 @@ class UpgradeTo6dot0(object):
                         response, resource, subnet['id'])
                     if check_res:
                         self.put('/%s/%s?responseChoice=1' % (
-                            resource, response[3][0]['ID']), ext_data)
+                            resource, response[0]['ID']), ext_data)
 
-    def _check_response(self, response, resource, subnet_id):
-        if response[0] == 404 or not response[3]:
+    @staticmethod
+    def _check_response(response, resource, subnet_id):
+        if not response:
             LOG.debug('There is no {} under subnet:{}.'.format(
                 resource, subnet_id))
             return False
-        elif response[0] not in self.restproxy.success_codes:
-            LOG.user(CONNECTION_FAILURE)
-            raise Exception
         else:
             return True
 
@@ -601,10 +593,10 @@ class UpgradeTo6dot0(object):
                 resp = self.restproxy.get(
                     '/l2domains/%s/vminterfaces' % mapping[
                         'nuage_subnet_id'])
-                if resp[3]:
+                if resp:
                     # Do a bulk call for all vm_interfaces
                     vminterfaces = []
-                    for vminterface in resp[3]:
+                    for vminterface in resp:
                         # [Port, IpAllocation]
                         result = session.query(Port, IPAllocation).filter(
                             Port.id == IPAllocation.port_id,
@@ -864,6 +856,7 @@ def main():
     base_uri = cfg.CONF.RESTPROXY.base_uri
     auth_resource = cfg.CONF.RESTPROXY.auth_resource
     organization = cfg.CONF.RESTPROXY.organization
+    verify_cert = cfg.CONF.RESTPROXY.verify_cert
 
     if not args.dry_run and 'v6' not in base_uri:
         LOG.user("Can't upgrade because plugin doesn't have v6 API set. "
@@ -877,8 +870,9 @@ def main():
                                     serverssl=serverssl,
                                     serverauth=serverauth,
                                     auth_resource=auth_resource,
-                                    organization=organization)
-
+                                    organization=organization,
+                                    verify_cert=verify_cert)
+        restproxy.generate_nuage_auth()
     except Exception as e:
         LOG.user('Error in connecting to VSD: %s', str(e), exc_info=True)
         sys.exit(1)
@@ -919,7 +913,7 @@ def main():
                  '  %(error_msg)s\n'
                  'For more information, please find the log file at '
                  '%(log_file)s and contact your vendor.',
-                 {'error_msg': e.message,
+                 {'error_msg': e.msg,
                   'log_file': nuage_logging.log_file},
                  exc_info=True)
         sys.exit(1)
