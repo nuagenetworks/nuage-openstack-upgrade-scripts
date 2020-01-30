@@ -63,7 +63,6 @@ from neutron.db.models_v2 import Port
 from neutron.db.models_v2 import Subnet
 from neutron.ipam.drivers.neutrondb_ipam.db_models import IpamAllocation
 from neutron.ipam.drivers.neutrondb_ipam.db_models import IpamSubnet
-from neutron.objects import network as net_obj
 from neutron.plugins.ml2.models import PortBinding
 
 from nuage_neutron.plugins.common import config as nuage_config
@@ -91,13 +90,19 @@ REPORT_NAME = 'upgrade_report.json'
 
 LOG = logging.getLogger(SCRIPT_NAME)
 
-CONNECTION_FAILURE = ('Cannot communicate with Nuage VSD. Please do not '
-                      'perform any further operations and contact the '
-                      'administrator.')
 MSGS_TO_RETRY = [('l2domain is in use and its properties can neither be '
                   'modified or deleted. Please detach the resources '
                   '(vms/containers) associated with it and retry.'),
                  'Network Gateway IPv6 Address null is not a valid IPv6.']
+
+MSG_INVALID_NETMASK = ('Invalid IPv6 netmask. Netmask can only be between '
+                       'a minimum 64 and maximum 64 length.')
+
+MSG_IPV6_EXT_PREFIXES_WARN = ("The IPv6 subnet %s has a prefixlen "
+                              "greater than 64. Please set "
+                              "ipv6.extended.prefixes.enabled config "
+                              "in VSD or delete this subnet.")
+
 NR_RETRIES = 20
 PGS_NAME_PREFIX = {
     'PG_FOR_LESS_SECURITY', 'defaultPG-VSG-BRIDGE', 'defaultPG-VRSG-BRIDGE',
@@ -116,6 +121,7 @@ class UpgradeTo6dot0(object):
         self.headers_for_pg = self.extra_header_for_pg()
         self.is_dry_run = is_dry_run
         self.output = {}
+        self.is_fatal_warn = False
 
     def put(self, resource, data):
         self.output_store('PUT: ' + str(resource), 'INFO')
@@ -150,6 +156,10 @@ class UpgradeTo6dot0(object):
         self.output_store(msg, 'WARN')
         if not self.is_dry_run:
             LOG.user('WARN: ' + msg)  # LOG.warn does not print to console
+
+    def fatal_warn(self, msg):
+        self.warn(msg)
+        self.is_fatal_warn = True
 
     def error(self, msg):
         self.output_store(msg, 'ERROR')
@@ -210,22 +220,40 @@ class UpgradeTo6dot0(object):
                         if len(ipv4_subnets) == 1 and len(ipv6_subnets) == 1:
                             # Dualstack
                             ipv6_subnet = ipv6_subnets[0]
-                        if not subnet['enable_dhcp'] and self._is_l2(mapping):
-                            # update unmanaged subnet to managed
-                            self.update_unmanaged_subnet_to_managed(
-                                session, ipv4_subnet=subnet,
-                                mapping=mapping, ipv6_subnet=ipv6_subnet,
-                                ext_data=dict(ext_data),
-                                network_name=network['name'])
-                        else:
-                            # update IPv6Gateway DHCP IP, enableDHCPv4,
-                            # enableDHCPv6
-                            self.config_new_flags_for_dhcp_enabled_subnet(
-                                session, ipv4_subnet=subnet, mapping=mapping,
-                                ipv6_subnet=ipv6_subnet,
-                                ext_data=dict(ext_data),
-                                network_name=network['name'])
-
+                            ipv6_prefix = netaddr.IPNetwork(
+                                ipv6_subnet['cidr']).prefixlen
+                            if ipv6_prefix > 64 and self.is_dry_run:
+                                msg = (MSG_IPV6_EXT_PREFIXES_WARN %
+                                       format(ipv6_subnet["id"]))
+                                self.fatal_warn(msg)
+                                continue
+                        try:
+                            if (not subnet['enable_dhcp'] and
+                                    self._is_l2(mapping)):
+                                # update unmanaged subnet to managed
+                                self.update_unmanaged_subnet_to_managed(
+                                    session, ipv4_subnet=subnet,
+                                    mapping=mapping, ipv6_subnet=ipv6_subnet,
+                                    ext_data=dict(ext_data),
+                                    network_name=network['name'])
+                            else:
+                                # update IPv6Gateway DHCP IP, enableDHCPv4,
+                                # enableDHCPv6
+                                self.config_new_flags_for_dhcp_enabled_subnet(
+                                    session, ipv4_subnet=subnet,
+                                    mapping=mapping,
+                                    ipv6_subnet=ipv6_subnet,
+                                    ext_data=dict(ext_data),
+                                    network_name=network['name'])
+                        except RESTProxyError as e:
+                            if (MSG_INVALID_NETMASK in e.msg and
+                                    ipv6_prefix > 64):
+                                msg = (MSG_IPV6_EXT_PREFIXES_WARN %
+                                       format(ipv6_subnet["id"]))
+                                self.fatal_warn(msg)
+                                continue
+                            else:
+                                raise
                         # Update external id of redirect targets and redirect
                         # target rules, acl templates
                         if self._is_l2(mapping):
@@ -250,7 +278,7 @@ class UpgradeTo6dot0(object):
                                    "OpenStack but it is DHCP-disabled on VSD. "
                                    "Please fix this inconsistent DHCP setting."
                                    .format(subnet['id']))
-                            self.warn(msg)
+                            self.fatal_warn(msg)
                         else:
                             if dhcpv6_ip:
                                 ip_allocation = session.query(
@@ -265,7 +293,7 @@ class UpgradeTo6dot0(object):
                                         "as IPv6Gateway.".format(
                                             subnet['id'], dhcpv6_ip,
                                             ip_allocation['port_id']))
-                                    self.warn(msg)
+                                    self.fatal_warn(msg)
                                 else:
                                     ipv4_subnet = (
                                         self.get_vsd_managed_dual_subnet(
@@ -283,7 +311,7 @@ class UpgradeTo6dot0(object):
                                        "'{}', IPv6Gateway: Network Gateway "
                                        "IPv6 Address null is not a valid "
                                        "IPv6 on VSD.".format(subnet['id']))
-                                self.warn(msg)
+                                self.fatal_warn(msg)
 
         return self.output
 
@@ -305,7 +333,7 @@ class UpgradeTo6dot0(object):
                        "Please use an available IP as gateway.".format(
                         ipv4_subnet['id'], dhcpv4_ip,
                         ip_allocation['port_id']))
-                self.warn(msg)
+                self.fatal_warn(msg)
             else:
                 self._create_update_dhcp_port_for_subnet(
                     session, subnet=ipv4_subnet, dhcp_ip=dhcpv4_ip)
@@ -538,7 +566,7 @@ class UpgradeTo6dot0(object):
                     update_succeeded = True
                     break
                 except RESTProxyError as e:
-                    if e.msg in MSGS_TO_RETRY:
+                    if any(msg in e.msg for msg in MSGS_TO_RETRY):
                         LOG.user("Attempt {}/{} to update l2domain "
                                  "for new DHCP flags failed because VSD is "
                                  "temporarily unavailable. "
@@ -632,7 +660,7 @@ class UpgradeTo6dot0(object):
                 can_continue_upgrade = True
                 break
             except RESTProxyError as e:
-                if e.msg in MSGS_TO_RETRY:
+                if any(msg in e.msg for msg in MSGS_TO_RETRY):
                     LOG.user("Attempt {}/{} to update l2domain "
                              "failed because VSD is temporarily "
                              "unavailable. Retrying.".format(attempt + 1,
@@ -649,16 +677,16 @@ class UpgradeTo6dot0(object):
                         'IP Address {} is not valid or cannot be in '
                         'reserved address space.'
                         .format(data['IPv6Address']))
-                if e.msg == msg_to_skipv4:
-                    self.warn(msg_to_skipv4 +
-                              ' Please recreate subnet {} with a valid '
-                              'cidr.'.format(ipv4_subnet['id']))
+                if msg_to_skipv4 in e.msg:
+                    self.fatal_warn(msg_to_skipv4 +
+                                    ' Please recreate subnet {} with a valid '
+                                    'cidr.'.format(ipv4_subnet['id']))
                     can_continue_upgrade = True
                     break
-                elif msg_to_skipv6 and e.msg == msg_to_skipv6:
-                    self.warn(msg_to_skipv6 +
-                              ' Please recreate subnet {} with a valid '
-                              'cidr.'.format(ipv6_subnet['id']))
+                elif msg_to_skipv6 and msg_to_skipv6 in e.msg:
+                    self.fatal_warn(msg_to_skipv6 +
+                                    ' Please recreate subnet {} with a valid '
+                                    'cidr.'.format(ipv6_subnet['id']))
                     can_continue_upgrade = True
                     break
                 else:
@@ -891,20 +919,23 @@ def main():
 
         if args.dry_run:
             if upgrade.has_warnings():
-                LOG.user('Dry-run finished with warnings raised.\n'
-                         'Please inspect the report {}, as corrective actions '
-                         'may be needed\n'
-                         'before run in non-dry-run.'.format(REPORT_NAME))
+                LOG.user('Dry-run finished with warnings/errors raised.\n'
+                         'Please inspect the report {}, as corrective '
+                         'actions are needed before running in '
+                         'production mode.'.format(REPORT_NAME))
             else:
                 LOG.user('Dry-run finished without any warnings raised.\n'
                          'System is good to be upgraded.')
         else:
             if upgrade.has_warnings():
-                LOG.user('The upgrade finished with warnings raised.\n'
-                         'Please inspect the report {}, as corrective actions '
-                         'may be needed.\n'
-                         'Possibly upgrade has to be re-run after applying '
-                         'those.'.format(REPORT_NAME))
+                msg = ("The upgrade finished with warnings raise.\n"
+                       "Please inspect the report {}, as corrective "
+                       "actions are needed. ").format(REPORT_NAME)
+                if upgrade.is_fatal_warn:
+                    LOG.user(msg + 'Please re-run after applying those.')
+                else:
+                    LOG.user(msg + 'No need to re-run the script.')
+                sys.exit(1)
             else:
                 LOG.user('The upgrade executed successfully.')
 
@@ -913,7 +944,7 @@ def main():
                  '  %(error_msg)s\n'
                  'For more information, please find the log file at '
                  '%(log_file)s and contact your vendor.',
-                 {'error_msg': e.msg,
+                 {'error_msg': str(e),
                   'log_file': nuage_logging.log_file},
                  exc_info=True)
         sys.exit(1)
