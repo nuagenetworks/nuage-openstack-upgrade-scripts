@@ -142,6 +142,13 @@ class ResourceConflictException(RESTProxyError):
             msg,
             REST_CONFLICT)
 
+class RESTProxyBulkError(RESTProxyError):
+    def __init__(self, nr_failures, errors=[]):
+        msg = ("{} errors in BULK REST call to VSD: "
+               "Unique errors: {}").format(nr_failures, '\n'.join(errors))
+        super(RESTProxyBulkError, self).__init__(
+            msg,
+            REST_CONFLICT)
 
 class RESTProxyServer(object):
 
@@ -584,7 +591,7 @@ class RESTProxyServer(object):
         response = self.rest_call('PUT', resource, data,
                                   extra_headers=extra_headers)
         if response[0] in REST_SUCCESS_CODES:
-            return response
+            return response[3]
         else:
             errors = json.loads(response[3])
             vsd_code = str(errors.get('internalErrorCode'))
