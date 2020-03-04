@@ -51,9 +51,9 @@ Run:
 import argparse
 import json
 import logging
-import time
 import os
 import sys
+import time
 
 import netaddr
 from neutron.common import config
@@ -61,6 +61,12 @@ from neutron.db.models_v2 import IPAllocation
 from neutron.db.models_v2 import Network
 from neutron.db.models_v2 import Port
 from neutron.db.models_v2 import Subnet
+
+# Value of external key in network is a ExternalNetwork object
+# which only appears when below import is added
+# It also makes the networksegments table visible in Queens
+from neutron.objects import network as network_object  # noqa
+
 from neutron.ipam.drivers.neutrondb_ipam.db_models import IpamAllocation
 from neutron.ipam.drivers.neutrondb_ipam.db_models import IpamSubnet
 from neutron.plugins.ml2.models import PortBinding
@@ -328,11 +334,11 @@ class UpgradeTo6dot0(object):
             ip_allocation = session.query(IPAllocation).filter_by(
                 ip_address=dhcpv4_ip, subnet_id=ipv4_subnet['id']).first()
             if ip_allocation:
-                msg = ("For VSD managed dhcp enabled subnet {}, the "
-                       "gateway {} is used by port {}. "
-                       "Please use an available IP as gateway.".format(
-                        ipv4_subnet['id'], dhcpv4_ip,
-                        ip_allocation['port_id']))
+                msg = ("For VSD managed dhcp enabled subnet {}, the gateway "
+                       "{} is used by port {}. Please use an available IP as "
+                       "gateway.".format(ipv4_subnet['id'],
+                                         dhcpv4_ip,
+                                         ip_allocation['port_id']))
                 self.fatal_warn(msg)
             else:
                 self._create_update_dhcp_port_for_subnet(
