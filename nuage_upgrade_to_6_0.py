@@ -934,14 +934,13 @@ def main():
                          'System is good to be upgraded.')
         else:
             if upgrade.has_warnings():
-                msg = ("The upgrade finished with warnings raise.\n"
+                msg = ("The upgrade finished with warnings raised.\n"
                        "Please inspect the report {}, as corrective "
                        "actions are needed. ").format(REPORT_NAME)
                 if upgrade.is_fatal_warn:
                     LOG.user(msg + 'Please re-run after applying those.')
                 else:
                     LOG.user(msg + 'No need to re-run the script.')
-                sys.exit(1)
             else:
                 LOG.user('The upgrade executed successfully.')
 
