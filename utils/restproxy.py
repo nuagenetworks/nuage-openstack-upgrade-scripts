@@ -142,6 +142,7 @@ class ResourceConflictException(RESTProxyError):
             msg,
             REST_CONFLICT)
 
+
 class RESTProxyBulkError(RESTProxyError):
     def __init__(self, nr_failures, errors=[]):
         msg = ("{} errors in BULK REST call to VSD: "
@@ -149,6 +150,7 @@ class RESTProxyBulkError(RESTProxyError):
         super(RESTProxyBulkError, self).__init__(
             msg,
             REST_CONFLICT)
+
 
 class RESTProxyServer(object):
 
@@ -654,6 +656,38 @@ class RESTProxyServer(object):
             results.append(response[3])
         return results
 
+    def bulk_post(self, resource, data,
+                  on_res_exists=retrieve_by_external_id.__func__,
+                  ignore_err_codes=None):
+        # Bulk post is limited to 500 requests
+        if ignore_err_codes is None:
+            ignore_err_codes = [REST_EXISTS_INTERNAL_ERR_CODE]
+        results = []
+        for chunk in self._chunkify(data, 500):
+            response = self.post(resource, chunk)
+            if response['responseMetadata']['failure']:
+                nr_failures = response['responseMetadata']['failure']
+                # Try to get for each failure with external id
+                for i in range(len(response['response'])):
+                    result = response['response'][i]
+                    if result['data'].get('errors'):
+                        error_code = result['data']['internalErrorCode']
+                        if error_code in ignore_err_codes:
+                            if on_res_exists:
+                                get_response = on_res_exists(self, resource,
+                                                             data[i])
+                                if get_response:
+                                    response['response'][i][
+                                        'data'] = get_response[0]
+                                    nr_failures -= 1
+                if nr_failures != 0:
+                    errors = {result['data']['errors'][0]['descriptions']
+                              [0]['description'] for result in
+                              response['response'] if result['data']}
+                    raise RESTProxyBulkError(nr_failures, list(errors))
+            results.extend(response['response'])
+        return results
+
     def bulk_put(self, resource, data, extra_headers=None):
         # Bulk put is limited to 500 requests
         results = []
@@ -667,18 +701,8 @@ class RESTProxyServer(object):
                           [0]['description'] for result in
                           response['response'] if result['data']}
                 raise RESTProxyBulkError(nr_failures, list(errors))
-            results.append(response['response'])
+            results.extend(response['response'])
         return results
-
-    def delete(self, resource, data='', extra_headers=None):
-        response = self.rest_call('DELETE', resource, data,
-                                  extra_headers=extra_headers)
-        if response[0] in REST_SUCCESS_CODES:
-            return response[3]
-        elif response[0] == REST_NOT_FOUND:
-            return None
-        else:
-            self.raise_error_response(response)
 
     def bulk_delete(self, resource, data='', extra_headers=None):
         results = []
@@ -695,8 +719,9 @@ class RESTProxyServer(object):
                     errors = {result['data']['errors'][0]['descriptions']
                               [0]['description'] for result in
                               response['response'] if
-                              (result['data'] and result != REST_NOT_FOUND and
-                               result != REST_SUCCESS_CODES)}
+                              (result['data'] and
+                               result['status'] != REST_NOT_FOUND and
+                               result['status'] not in REST_SUCCESS_CODES)}
                     raise RESTProxyBulkError(nr_failures - num_not_founds,
                                              list(errors))
             results.append(response['response'])
