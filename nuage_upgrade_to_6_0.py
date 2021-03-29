@@ -183,8 +183,13 @@ class UpgradeTo6dot0(object):
         for network in networks:
             network = session.query(Network).filter(Network.id ==
                                                     network.id).first()
-            ext_data = {'externalID': self._get_external_id(network['id'])}
+            network_types = [segment['network_type']
+                             for segment in network.get('segments')]
+            if "vxlan" not in network_types:
+                # Skip networks without vxlan segments
+                continue
 
+            ext_data = {'externalID': self._get_external_id(network['id'])}
             # Find all subnets in the network
             subnets = session.query(Subnet).filter_by(
                 network_id=network['id']).all()
