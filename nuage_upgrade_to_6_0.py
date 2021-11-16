@@ -43,7 +43,7 @@ Requirement:
     1. nuage_plugin.ini : which has details to connect to VSD
     2. neutron.conf : which has details to connect to neutron database.
     The optional argument --dry-run is to run upgrade script in dry-run mode
-    and generate a upgrade report named dry_run_report.json.
+    and generate a upgrade report named upgrade_report.json.
 Run:
     python nuage_upgrade_to_6_0.py --neutron-conf <neutron.conf>
       --nuage-conf <nuage_plugin.ini> [--dry-run]
@@ -108,6 +108,11 @@ MSG_IPV6_EXT_PREFIXES_WARN = ("The IPv6 subnet %s has a prefixlen "
                               "greater than 64. Please set "
                               "ipv6.extended.prefixes.enabled config "
                               "in VSD or delete this subnet.")
+
+MSG_IPV6_EXT_PREFIXES_WARN_DRYRUN = (MSG_IPV6_EXT_PREFIXES_WARN +
+                                     (" If ipv6.extended.prefixes.enabled is "
+                                      "set to True on VSD, "
+                                      "please ignore this warning."))
 
 NR_RETRIES = 20
 PGS_NAME_PREFIX = {
@@ -234,9 +239,9 @@ class UpgradeTo6dot0(object):
                             ipv6_prefix = netaddr.IPNetwork(
                                 ipv6_subnet['cidr']).prefixlen
                             if ipv6_prefix > 64 and self.is_dry_run:
-                                msg = (MSG_IPV6_EXT_PREFIXES_WARN %
+                                msg = (MSG_IPV6_EXT_PREFIXES_WARN_DRYRUN %
                                        format(ipv6_subnet["id"]))
-                                self.fatal_warn(msg)
+                                self.warn(msg)
                                 continue
                         try:
                             if (not subnet['enable_dhcp'] and
