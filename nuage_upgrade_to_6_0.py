@@ -394,6 +394,8 @@ class UpgradeTo6dot0(object):
             resource = 'domains'
             vsd_domain_id = self.get_router_id_by_subnet(
                 mapping['nuage_subnet_id'])
+            if not vsd_domain_id:
+                return
         pgs_to_update = {
             'SOFTWARE': [],
             'HARDWARE': []
@@ -436,11 +438,20 @@ class UpgradeTo6dot0(object):
                     self.bulk_delete('/policygroups/?responseChoice=1',
                                      pgs_to_delete)
 
+    BUILD_IN_ROBUSTNESS_FOR_SUBNET_NOT_TO_EXIST = True
+
     def get_router_id_by_subnet(self, subnet_vsd_id):
-        response = self.restproxy.get('/subnets/%s' % subnet_vsd_id)
-        zone_response = self.restproxy.get('/zones/%s' %
-                                           response[0]['parentID'])
-        return zone_response[0]['parentID']
+        response = self.restproxy.get(
+            '/subnets/%s' % subnet_vsd_id,
+            required=not self.BUILD_IN_ROBUSTNESS_FOR_SUBNET_NOT_TO_EXIST)
+        if response:
+            zone_response = self.restproxy.get('/zones/%s' %
+                                               response[0]['parentID'])
+            return zone_response[0]['parentID']
+        else:
+            LOG.warning('Could not find vsd subnet {}, '
+                        'ignoring and proceeding'.format(subnet_vsd_id))
+            return None
 
     def get_update_pg_with_max_vports(self, resource, vsd_domain_id, pg_vports,
                                       sg_type):
